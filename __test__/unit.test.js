@@ -608,8 +608,6 @@ describe("controlCommand (admin match control)", () => {
     ["toggle_knife", {}, "css_roundknife"],
     ["toggle_playout", {}, "css_playout"],
     ["toggle_whitelist", {}, "css_whitelist"],
-    ["ready_required", { count: 0 }, "css_readyrequired 0"],
-    ["add_ready_time", { seconds: "120" }, "matchzy_add_ready_time 120"],
     ["change_map", { map: "de_nuke" }, "css_map de_nuke"],
     ["team_name", { team: 2, name: " Team Liquid " }, "css_team2 Team Liquid"],
     ["say", { message: "Tech pause, 5 min" }, "css_asay Tech pause, 5 min"],
@@ -622,7 +620,7 @@ describe("controlCommand (admin match control)", () => {
     ["say", { message: 'hi"; quit' }],
     ["say", { message: "x".repeat(121) }],
     ["team_name", { team: 3, name: "A" }],
-    ["ready_required", { count: 11 }],
+    ["ready_required", { count: 2 }],
     ["change_map", { map: "de_nuke; quit" }],
     ["cvar", { cvar: "sv_cheats", value: 1 }],
     ["cvar", { cvar: "mp_freezetime", value: 61 }]

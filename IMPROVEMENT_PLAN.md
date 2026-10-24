@@ -219,7 +219,7 @@ Facts below were checked against MatchZy's source (MatchManagement.cs, ReadySyst
   - [x] earlier in the match admin menu: force pause/unpause, end with a winner (forfeit), cancel, restart,
     add/remove player, backup restore, change server, MatchZy config preview, send panel address
   - [x] match control panel (`POST /matches/:id/control`, `utility/matchcontrol.ts`, unit tested, audited): force start,
-    skip veto, knife/playout/whitelist toggles, ready required, add ready time, change map, rename teams,
+    skip veto, knife/playout/whitelist toggles, change map, rename teams,
     `css_asay` with templates, curated live cvars
   - [x] server health card (`GET /matches/:id/server/status`: RCON reachable + get5_status); RCON console with history
   - [ ] restore by round from `match_round` (`css_restore N`). **Blocked** until the server runs a MatchZy build with

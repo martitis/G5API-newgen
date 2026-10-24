@@ -1441,7 +1441,7 @@ router.post("/:match_id/callbacks", Utils.ensureAuthenticated, audited("match.up
  *   post:
  *     description: >
  *       Admin match control over RCON. Body - action (start, skip_veto, toggle_knife, toggle_playout,
- *       toggle_whitelist, ready_required + count, add_ready_time + seconds, change_map + map, team_name + team (1|2)
+ *       toggle_whitelist, change_map + map, team_name + team (1|2)
  *       + name, say + message, cvar + cvar + value from the curated list). Owner or admin; every call is audited.
  *     produces:
  *       - application/json

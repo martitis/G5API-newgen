@@ -24,8 +24,6 @@ export const CONTROL_ACTIONS = [
   "toggle_knife",
   "toggle_playout",
   "toggle_whitelist",
-  "ready_required",
-  "add_ready_time",
   "change_map",
   "team_name",
   "say",
@@ -64,11 +62,6 @@ export function controlCommand(action: unknown, args: Record<string, unknown> = 
       return "css_playout";
     case "toggle_whitelist":
       return "css_whitelist";
-    case "ready_required":
-      // 0 = every connected player must ready up.
-      return `css_readyrequired ${integer(args.count, 0, 10, "Ready count")}`;
-    case "add_ready_time":
-      return `matchzy_add_ready_time ${integer(args.seconds, 10, 900, "Seconds")}`;
     case "change_map": {
       const map = typeof args.map === "string" ? args.map.trim() : "";
       if (!/^[A-Za-z0-9_./-]{1,128}$/.test(map)) throw new RconArgumentError("Invalid map name.");
