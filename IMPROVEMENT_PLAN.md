@@ -222,8 +222,8 @@ Facts below were checked against MatchZy's source (MatchManagement.cs, ReadySyst
     skip veto, knife/playout/whitelist toggles, change map, rename teams,
     `css_asay` with templates, curated live cvars
   - [x] server health card (`GET /matches/:id/server/status`: RCON reachable + get5_status); RCON console with history
-  - [ ] restore by round from `match_round` (`css_restore N`). **Blocked** until the server runs a MatchZy build with
-    PR #422 (CS2 1.41.9.1 rejects MatchZy's absolute round-backup paths, so no round files are written; see Phase 6)
+  - [ ] restore by round from `match_round` (`css_restore N`, works over RCON). Waits for the game server to run
+    **MatchZy 0.9.2** (released 2026-10-18 with PR #422; older builds write no round backups on CS2 1.41.9.1)
   - [x] connected players panel (`GET /matches/:id/server/players` from CS2's `status`, `parseStatusPlayers` unit
     tested; kick via `POST /server/kick` = `kickid`). Move team / late sub stay in the match menu (by Steam ID),
     since `status` has no Steam IDs. **Check against a live server:** the `status` row format was written from
@@ -280,7 +280,7 @@ Facts below were checked against MatchZy's source (MatchManagement.cs, ReadySyst
 - [x] Node 22 LTS (`engines` >=22.12, `.nvmrc`, Dockerfile `node:22-alpine`); pm2 `prodrun.json` with
   `LOG_LEVEL` and a memory restart; [DEPLOY.md](DEPLOY.md) (install, config keys, updates, proxy settings for SSE and
   demo uploads, `/health`, logs, Docker, security checklist)
-- [x] **Game server requirements** documented in DEPLOY.md (MatchZy with PR #422, `-allow_round_backup_files`,
+- [x] **Game server requirements** documented in DEPLOY.md (MatchZy 0.9.2 or newer, `-allow_round_backup_files`,
   `apiURL` reachable, "Send panel address to server", join password)
 - [x] `/health` (DB check, 503 when down, no session); pino logger (`utility/logger.ts`, redacts auth headers and
   cookies) for HTTP logs in production, the error handler and unhandled rejections; morgan once in development
