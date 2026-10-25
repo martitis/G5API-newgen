@@ -45,6 +45,7 @@ import vetosidesRouter from "./src/routes/vetosides.js";
 import passport from "./src/utility/auth.js";
 import Utils from "./src/utility/utils.js";
 import logger from "./src/utility/logger.js";
+import { resolveUser, writeGuard } from "./src/utility/access.js";
 import { db } from "./src/services/db.js";
 import {router as v2Router} from "./src/routes/v2/api.js";
 import {router as v2DemoRouter} from "./src/routes/v2/demoapi.js";
@@ -173,6 +174,10 @@ app.use(
     credentials: true, // allow session cookie from browser to pass through
   })
 );
+
+// API-key requests get their user here; then every write needs an admin unless it's on the short allowlist.
+app.use(resolveUser);
+app.use(writeGuard);
 
 // Server-sent event streams: a comment line every 25s keeps idle connections open through nginx/Caddy and
 // browsers. SSE clients ignore comment lines.

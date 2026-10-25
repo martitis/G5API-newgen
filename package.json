@@ -29,7 +29,7 @@
   },
   "scripts": {
     "build": "yarn clean && tsc",
-    "lint": "eslint . --max-warnings=532",
+    "lint": "eslint . --max-warnings=524",
     "format": "prettier --write",
     "clean": "node -e \"require('fs').rmSync('./dist',{recursive:true,force:true})\"",
     "start": "tsc-watch --project . --outDir ./dist --onSuccess \"nodemon ./dist/bin/www.js\"",

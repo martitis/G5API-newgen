@@ -17,12 +17,19 @@ import User from "steamapi/dist/src/structures/User.js";
 
 import logger from "./logger.js";
 import { passwordProblem, usernameProblem } from "./credentials.js";
-passport.serializeUser((user, done) => {
-  done(null, user);
+import { configRoleLists, loadUser } from "./access.js";
+
+// The session stores only the user id; the user (roles included) is read from the database on every request,
+// so a role changed by a super admin, or a deleted account, applies at once.
+passport.serializeUser((user: Express.User, done) => {
+  done(null, { id: (user as { id: number }).id });
 });
 
-passport.deserializeUser((obj: User, done) => {
-  done(null, obj as any);
+passport.deserializeUser((obj: { id?: unknown }, done) => {
+  loadUser(obj?.id).then(
+    (user) => done(null, (user as unknown as Express.User) ?? false),
+    (err) => done(err)
+  );
 });
 
 /** The mock Steam login (any visitor becomes the test user) needs NODE_ENV=test and G5API_MOCK_AUTH=1 (set by the
@@ -51,8 +58,8 @@ async function returnStrategy(identifier: any, profile: any, done: any) {
       let defaultMaps = [];
       let isAdmin = 0;
       let isSuperAdmin = 0;
-      let superAdminList = (config.get("super_admins.steam_ids") as String).split(",");
-      let adminList = (config.get("admins.steam_ids") as String).split(",");
+      // Read from the config file at each login, so editing the lists needs no API restart.
+      const { superAdmins: superAdminList, admins: adminList } = configRoleLists();
       let sql = "SELECT * FROM user WHERE steam_id = ?";
       // If we are an admin, check!
       if (superAdminList.indexOf(profile.id!.toString()) >= 0) {
@@ -80,6 +87,7 @@ async function returnStrategy(identifier: any, profile: any, done: any) {
           medium_image: profile.photos[1].value,
           large_image: profile.photos[2].value,
           api_key: Utils.encrypt(apiKey),
+          steam_verified: 1,
         };
         curUser = await db.query(sql, [newUser]);
         sql = "SELECT * FROM user WHERE steam_id = ?";
@@ -132,19 +140,8 @@ async function returnStrategy(identifier: any, profile: any, done: any) {
           await db.query(sql, [defaultMaps]);
         }
       }
-      // The roles as stored now (config list, or set in the panel).
-      const roles: RowDataPacket[] = await db.query("SELECT admin, super_admin FROM user WHERE id = ?", [curUser[0].id]);
-      return done(null, {
-        steam_id: profile.id,
-        name: profile.displayName,
-        super_admin: Number(roles[0]?.super_admin) || 0,
-        admin: Number(roles[0]?.admin) || 0,
-        id: curUser[0].id,
-        small_image: profile.photos[0].value,
-        medium_image: profile.photos[1].value,
-        large_image: profile.photos[2].value,
-        api_key: curUser[0].id + ":" + Utils.decrypt(curUser[0].api_key),
-      });
+      // The user as stored now (roles from the config list, or set in the panel).
+      return done(null, await loadUser(curUser[0].id));
     } catch (err) {
       logger.error({ err, steam_id: profile?.id }, "Steam login failed");
       return done(null, null);
@@ -155,18 +152,8 @@ async function returnStrategy(identifier: any, profile: any, done: any) {
 passport.use(strategyForEnvironment());
 
 // Local Strategies
-/** The session user for a user row (same shape as a Steam login). */
-const sessionUser = (row: RowDataPacket) => ({
-  steam_id: row.steam_id,
-  name: row.name,
-  admin: row.admin,
-  super_admin: row.super_admin,
-  id: row.id,
-  small_image: row.small_image,
-  medium_image: row.medium_image,
-  large_image: row.large_image,
-  api_key: row.id + ":" + Utils.decrypt(row.api_key)
-});
+/** A loaded user in the shape passport expects (false when the account is gone). */
+const asSessionUser = (user: Awaited<ReturnType<typeof loadUser>>) => (user ?? false) as unknown as Express.User | false;
 
 const LOCAL_DISABLED = "Username and password logins are turned off on this panel. Sign in with Steam instead.";
 
@@ -178,7 +165,7 @@ passport.use('local-login', new LocalStrategy(async (username, password, done) =
     if (!rows.length || !rows[0].password || !(await compare(password, rows[0].password))) {
       return done(null, false, { message: "Wrong username or password." });
     }
-    return done(null, sessionUser(rows[0]));
+    return done(null, asSessionUser(await loadUser(rows[0].id)));
   } catch (err) {
     return done(err);
   }
@@ -191,15 +178,17 @@ passport.use('local-register',
       const username = rawUsername.trim();
       const problem = usernameProblem(username) ?? passwordProblem(password);
       if (problem) return done(null, false, { message: problem });
-      // A SteamID64, a profile link or a custom profile name (looked up on Steam).
-      const steamId: string = await Utils.getSteamPID(String(req.body.steam_id ?? ""));
-      if (!steamId) {
-        return done(null, false, { message: "Enter your SteamID64 or Steam profile link (steamcommunity.com/...)." });
+      // Optional: a SteamID64, a profile link or a custom profile name (looked up on Steam). Without one the
+      // account has no Steam ID (stats aren't linked to it until one is added).
+      const steamInput = String(req.body.steam_id ?? "").trim();
+      const steamId: string | null = steamInput ? await Utils.getSteamPID(steamInput) : null;
+      if (steamInput && !steamId) {
+        return done(null, false, { message: "Enter your SteamID64 or Steam profile link (steamcommunity.com/...), or leave it empty." });
       }
       if ((await db.query("SELECT id FROM user WHERE username = ?", [username])).length) {
         return done(null, false, { message: "That username is taken." });
       }
-      if ((await db.query("SELECT id FROM user WHERE steam_id = ?", [steamId])).length) {
+      if (steamId && (await db.query("SELECT id FROM user WHERE steam_id = ?", [steamId])).length) {
         return done(null, false, {
           message:
             "This Steam account already has a panel account. Sign in with Steam, then add a username and password on your profile page."
@@ -211,7 +200,7 @@ passport.use('local-register',
       const insert: any = await db.query("INSERT INTO user SET ?", [
         await db.buildUpdateStatement({
           steam_id: steamId,
-          name: (await Utils.getSteamName(steamId)) || username,
+          name: (steamId && (await Utils.getSteamName(steamId))) || username,
           admin: 0,
           super_admin: 0,
           steam_verified: 0,
@@ -232,8 +221,7 @@ passport.use('local-register',
         ["de_vertigo", "Vertigo"]
       ].map(([map, display]) => [map, display, userId]);
       await db.query("INSERT INTO map_list (map_name, map_display_name, user_id) VALUES ?", [defaultMaps]);
-      const rows: RowDataPacket[] = await db.query("SELECT * FROM user WHERE id = ?", [userId]);
-      return done(null, sessionUser(rows[0]));
+      return done(null, asSessionUser(await loadUser(userId)));
     } catch (err) {
       return done(err);
     }

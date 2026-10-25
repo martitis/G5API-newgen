@@ -8,6 +8,19 @@ import { Router } from "express";
 
 const router = Router();
 
+/** Whether the user plays in (or spectates) a match that is running on this server. */
+async function playsOnServer(user: Express.User, serverId: number): Promise<boolean> {
+  const steamId = (user as { steam_id?: string | null }).steam_id;
+  if (!steamId) return false;
+  const rows: RowDataPacket[] = await db.query(
+    "SELECT m.id FROM `match` m WHERE m.server_id = ? AND m.end_time IS NULL AND (m.cancelled IS NULL OR m.cancelled = 0) " +
+      "AND (EXISTS (SELECT 1 FROM team_auth_names ta WHERE ta.auth = ? AND ta.team_id IN (m.team1_id, m.team2_id)) " +
+      "OR EXISTS (SELECT 1 FROM match_spectator ms WHERE ms.match_id = m.id AND ms.auth = ?)) LIMIT 1",
+    [serverId, steamId, steamId]
+  );
+  return rows.length > 0;
+}
+
 /** Characters that are safe in sv_password and in a steam://connect/ip:port/password link. */
 const JOIN_PASSWORD = /^[A-Za-z0-9_.\-!@*+=~]{1,64}$/;
 
@@ -179,7 +192,11 @@ router.get("/", Utils.ensureAuthenticated, async (req, res, next) => {
  */
 router.get("/available", Utils.ensureAuthenticated, async (req, res, next) => {
   try {
-    // Check if admin or super admin, adjust by providing rcon password or not.
+    // Only admins create matches, so only they need the free servers (and their addresses).
+    if (!Utils.adminCheck(req.user!)) {
+      res.status(403).json({ message: "Only admins can list free servers." });
+      return;
+    }
     let sql: string;
     let servers: RowDataPacket[];
     if (req.user && Utils.superAdminCheck(req.user)) {
@@ -286,15 +303,20 @@ router.get("/:server_id", Utils.ensureAuthenticated, async (req, res, next) => {
       server = await db.query(sql, [serverID, req.user?.id]);
     }
     if (server.length < 1) {
-      // Grab bare min. so a user can see a connect button or the like.
-      sql = "SELECT gs.ip_string, gs.port FROM game_server gs WHERE gs.id = ?";
-      server = await db.query(sql, [serverID]);
-      if (server[0]) {
-        server = JSON.parse(JSON.stringify(server[0]));
-        res.json({ server });
-      } else {
+      // Someone else's server: the address (to connect) only for admins, or a player or spectator of a match
+      // that is running on it. Everyone else gets nothing, not even whether it exists.
+      const exists: RowDataPacket[] = await db.query("SELECT id FROM game_server WHERE id = ?", [serverID]);
+      if (!exists.length) {
         res.status(404).json({ message: "Server not found." });
+        return;
       }
+      if (!Utils.adminCheck(req.user!) && !(await playsOnServer(req.user!, serverID))) {
+        res.status(403).json({ message: "User is not authorized to see this server." });
+        return;
+      }
+      sql = "SELECT gs.id, gs.ip_string, gs.port, gs.gotv_port, gs.display_name FROM game_server gs WHERE gs.id = ?";
+      server = await db.query(sql, [serverID]);
+      res.json({ server: JSON.parse(JSON.stringify(server[0])) });
     } else {
       server = JSON.parse(JSON.stringify(server[0]));
       res.json({ server });

@@ -1,5 +1,7 @@
 import { agent } from 'supertest';
 import app from '../app.js'
+import { hashSync } from 'bcrypt';
+import { db } from '../src/services/db.js';
 const request = agent(app);
 let adminCheck = 0;
 
@@ -172,5 +174,49 @@ describe("Test the user routes", () => {
     .set('Accept', 'application/json')
     .send(newUserData)
     .expect(403);
+  });
+  describe("permissions", () => {
+    it("Should register without a Steam account, and leave that user read only.", async () => {
+      const player = agent(app);
+      await player.post('/register').set('Content-Type', 'application/json')
+        .send({ username: "nosteam", password: "nosteam-pass" }).expect(200);
+      const me = (await player.get('/isloggedin').expect(200)).body;
+      expect(me).toMatchObject({ steam_id: null, admin: 0, super_admin: 0 });
+      // Reads work; every write except the account itself is refused by the guard.
+      await player.get('/teams').expect((res) => expect([200, 404]).toContain(res.status));
+      for (const [method, path] of [["post", "/teams"], ["put", "/teams"], ["post", "/servers"], ["delete", "/seasons"],
+        ["post", "/matches"], ["post", "/templates"], ["post", "/tournaments"], ["post", "/maps"]]) {
+        const res = await player[method](path).set('Content-Type', 'application/json').send([{}]);
+        expect([method, path, res.status, res.body.message]).toEqual([method, path, 403, "Only admins can change things on this panel."]);
+      }
+      // Server addresses aren't for regular users.
+      await player.get('/servers/available').expect(403);
+      // Their own account is theirs to change.
+      await player.put('/users').set('Content-Type', 'application/json')
+        .send([{ id: me.id, old_password: "nosteam-pass", password: "nosteam-pass2" }]).expect(200);
+    });
+    it("Should apply a role change to a signed-in user on their next request, and sign out a deleted account.", async () => {
+      const insert = await db.query("INSERT INTO user SET ?", [{
+        steam_id: "76561198000000555", name: "Promoted", admin: 0, super_admin: 0, steam_verified: 1,
+        username: "promoted", password: hashSync("promoted-pass", 4), api_key: null
+      }]);
+      const id = insert.insertId;
+      const user = agent(app);
+      await user.post('/login').set('Content-Type', 'application/json')
+        .send({ username: "promoted", password: "promoted-pass" }).expect(200);
+      // A write that would only fail validation shows whether the guard let it through.
+      const tryWrite = () => user.post('/templates').set('Content-Type', 'application/json').send([{}]);
+      expect((await tryWrite()).status).toBe(403);
+      await db.query("UPDATE user SET admin = 1 WHERE id = ?", [id]);
+      expect((await tryWrite()).status).toBe(412);
+      await db.query("UPDATE user SET admin = 0 WHERE id = ?", [id]);
+      expect((await tryWrite()).status).toBe(403);
+      // An account whose Steam ID was never proven is never an admin, whatever its flags say.
+      await db.query("UPDATE user SET admin = 1, steam_verified = 0 WHERE id = ?", [id]);
+      expect((await tryWrite()).status).toBe(403);
+      await db.query("DELETE FROM map_list WHERE user_id = ?", [id]);
+      await db.query("DELETE FROM user WHERE id = ?", [id]);
+      expect((await user.get('/isloggedin').expect(200)).body).toBe(false);
+    });
   });
 });
