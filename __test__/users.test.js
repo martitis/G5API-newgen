@@ -175,6 +175,11 @@ describe("Test the user routes", () => {
     .send(newUserData)
     .expect(403);
   });
+  afterAll(async () => {
+    // The later suites run as a regular admin (not a super admin). Roles are read on every request now, so the
+    // demotion above would otherwise stick; a role set in the panel (roles_from_config = 0) survives their logins.
+    await db.query("UPDATE user SET admin = 1, super_admin = 0, roles_from_config = 0 WHERE steam_id = ?", ["76561198000000042"]);
+  });
   describe("permissions", () => {
     it("Should register without a Steam account, and leave that user read only.", async () => {
       const player = agent(app);

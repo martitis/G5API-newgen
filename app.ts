@@ -288,7 +288,8 @@ app.post('/logout', function(req, res, next) {
 // Brute-force protection: 10 attempts per IP per 15 minutes.
 const authRateLimit = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 10,
+  // The test suites sign in and register far more than 10 times from one address.
+  limit: process.env.NODE_ENV === "test" ? 1000 : 10,
   standardHeaders: true,
   legacyHeaders: false,
   message: { message: "Too many attempts, please try again later." }
