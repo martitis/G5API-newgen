@@ -275,6 +275,16 @@ Facts below were checked against MatchZy's source (MatchManagement.cs, ReadySyst
   - Steam users can add a username and password on their profile (`PUT /users` with `username`)
   - `GET /auth/options` hides panel accounts when they're off
   - fixed a super admin being logged out when editing their own profile
+- [x] **5.10 Strict permissions** (user request, 2026-10-25):
+  - writes are deny by default (`utility/access.ts writeGuard`): only admins create or change anything; regular users
+    are read only (except their own account and PUG queues)
+  - roles are reloaded from the database on every request, so a role change applies at once; a deleted account is
+    signed out
+  - the admin config lists are read from the file at each Steam login (no restart), no promotion at startup
+  - registration without Steam (`user.steam_id` nullable)
+  - server addresses only for admins or a live match's players and spectators; `/servers/available` is admin only
+  - the panel hides create/edit controls from non-admins; tests cover the guard, fresh config lists, a read-only
+    account without Steam, immediate promotion and demotion, and unproven Steam IDs
 
 ## Phase 6: Ops
 - [x] Node 22 LTS (`engines` >=22.12, `.nvmrc`, Dockerfile `node:22-alpine`); pm2 `prodrun.json` with
