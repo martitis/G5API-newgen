@@ -64,7 +64,7 @@ describe("Test the user routes", () => {
       .send([{ steam_id: "76561198000000777", admin: 1 }])
       .expect(412)
       .expect((res) => {
-        expect(res.body.message).toMatch(/signed in with Steam/);
+        expect(res.body.message).toMatch(/never confirmed by a Steam login/);
       });
   });
   it('Should explain what is wrong with a registration.', async () => {
@@ -109,6 +109,16 @@ describe("Test the user routes", () => {
     await agent(app).post('/login').set('Content-Type', 'application/json')
       .send({ username: "testadmin", password: "steamuser-pass" })
       .expect(200);
+  });
+  it('Should let a super admin make an account without Steam an admin.', async () => {
+    const local = agent(app);
+    await local.post('/register').set('Content-Type', 'application/json')
+      .send({ username: "nosteam-admin", password: "nosteam-admin-pass" }).expect(200);
+    const me = (await local.get('/isloggedin').expect(200)).body;
+    expect(me.steam_id).toBeNull();
+    await request.put('/users').set('Content-Type', 'application/json').send([{ id: me.id, admin: 1 }]).expect(200);
+    // Promoted on its next request: a write that only fails validation passes the admin check.
+    expect((await local.post('/templates').set('Content-Type', 'application/json').send([{}])).status).toBe(412);
   });
   it('Should list users with their roles for a super admin.', () => {
     return request.get('/admin/users')

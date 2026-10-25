@@ -19,6 +19,7 @@ import { RowDataPacket } from "mysql2";
 import { UserObject } from "../types/users/UserObject.js";
 import config from "config";
 import { passwordProblem, usernameProblem } from "../utility/credentials.js";
+import { canHoldRoles } from "../utility/access.js";
 
 /* Swagger shared definitions */
 
@@ -364,9 +365,12 @@ router.put("/", Utils.ensureAuthenticated, audited("user.update", { target: (req
     if (callerIsSuperAdmin) {
       // A super admin locked out by mistake gets the role back from super_admins.steam_ids at the next Steam login.
       const rolesChanged: boolean = req.body[0].admin != null || req.body[0].super_admin != null;
-      // A local account's Steam ID isn't proven: it must not get admin rights (see steam_verified).
-      if (rolesChanged && (Number(isAdmin) > 0 || Number(isSuperAdmin) > 0) && !Number(target.steam_verified)) {
-        res.status(412).json({ message: "Only accounts that signed in with Steam can be admins." });
+      // A local account that claimed a Steam ID it never proved must not get admin rights (the ID may be someone
+      // else's); accounts without a Steam ID can (see access.canHoldRoles).
+      if (rolesChanged && (Number(isAdmin) > 0 || Number(isSuperAdmin) > 0) && !canHoldRoles(target)) {
+        res.status(412).json({
+          message: "This account's Steam ID was never confirmed by a Steam login, so it can't be an admin."
+        });
         return;
       }
       // Super admins manage roles and can force-set passwords, e.g. for locked out users.

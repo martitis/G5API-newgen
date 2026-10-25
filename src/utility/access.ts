@@ -31,8 +31,9 @@ export interface SessionUser {
 }
 
 /**
- * The user as stored now. An account whose Steam ID was never proven by a Steam login (steam_verified = 0)
- * never counts as an admin, whatever its flags say.
+ * The user as stored now. An account with a Steam ID that was never proven by a Steam login (a local account that
+ * claimed it: steam_verified = 0) never counts as an admin, whatever its flags say: the ID may be someone else's.
+ * Accounts without a Steam ID can hold roles a super admin gives them (they can't pass as anyone).
  * @returns null when the account no longer exists.
  */
 export async function loadUser(id: unknown): Promise<SessionUser | null> {
@@ -46,18 +47,24 @@ export async function loadUser(id: unknown): Promise<SessionUser | null> {
   const row = rows[0];
   if (!row) return null;
   const verified = Number(row.steam_verified) > 0;
+  const mayHoldRoles = canHoldRoles(row);
   return {
     id: row.id,
     steam_id: row.steam_id ?? null,
     name: row.name,
-    admin: verified && Number(row.admin) > 0 ? 1 : 0,
-    super_admin: verified && Number(row.super_admin) > 0 ? 1 : 0,
+    admin: mayHoldRoles && Number(row.admin) > 0 ? 1 : 0,
+    super_admin: mayHoldRoles && Number(row.super_admin) > 0 ? 1 : 0,
     steam_verified: verified ? 1 : 0,
     small_image: row.small_image ?? null,
     medium_image: row.medium_image ?? null,
     large_image: row.large_image ?? null,
     api_key: row.id + ":" + (Utils.decrypt(row.api_key) ?? "")
   };
+}
+
+/** Whether an account may be an admin: its Steam ID was proven by a Steam login, or it has none. */
+export function canHoldRoles(row: Record<string, any>): boolean {
+  return Number(row.steam_verified) > 0 || row.steam_id == null || row.steam_id === "";
 }
 
 /** The user an API key ("<id>:<key>", header user-api or body[0].user_api) belongs to, or null. */
