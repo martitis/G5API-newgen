@@ -80,14 +80,18 @@ describe("Test the match list summary route", () => {
 });
 
 describe("Test that only admins create matches", () => {
-  // After the matches suite the mock user is a regular user again (scripts/test-admin.mjs reset).
-  beforeAll(() => request.get("/auth/steam/return").expect(302));
+  // A regular user: a fresh account without Steam (the mock Steam user is an admin in this suite).
+  const regular = agent(app);
+  beforeAll(() =>
+    regular.post("/register").set("Content-Type", "application/json")
+      .send({ username: "regular-user", password: "regular-pass" }).expect(200)
+  );
   it("Should refuse the admin pages to a regular user.", async () => {
-    await request.get("/admin/users").expect(403);
-    await request.get("/admin/audit").expect(403);
+    await regular.get("/admin/users").expect(403);
+    await regular.get("/admin/audit").expect(403);
   });
   it("Should refuse match creation for a regular user.", () => {
-    return request
+    return regular
       .post("/matches/")
       .set("Content-Type", "application/json")
       .send([{ server_id: 1, team1_id: 1, team2_id: 2, max_maps: 1, veto_mappool: "de_mirage" }])
