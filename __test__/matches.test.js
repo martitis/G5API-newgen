@@ -95,18 +95,19 @@ describe("Test the matches routes", () => {
         expect(result.body.message).toMatch(/successfully/);
       });
   });
-  it('Should attempt to get the API key of the match.', () => {
+  // Admins manage every match, not only their own.
+  it('Should show an admin the API key of a match it does not own.', () => {
     return request.get('/matches/1')
       .expect(200)
       .expect((result) => {
-        expect(result.body.match.api_key).toBeUndefined();
+        expect(result.body.match.api_key).not.toBeUndefined();
       });
   });
-  it('Should attempt to forfeit the match.', () => {
+  it('Should let an admin edit a match it does not own.', () => {
     let updatedMatchData = [
       {
         match_id: 1,
-        forfeit: 1
+        title: "Edited by another admin"
       }
     ];
     return request
@@ -114,25 +115,20 @@ describe("Test the matches routes", () => {
       .set("Content-Type", "application/json")
       .set("Accept", "application/json")
       .send(updatedMatchData)
-      .expect(403)
+      .expect(200)
       .expect((result) => {
-        expect(result.body.message).toMatch(/not authorized/);
+        expect(result.body.message).toMatch(/successfully/);
       });
   });
-  it('Should attempt to delete the match.', () => {
-    let updatedMatchData = [
-      {
-        match_id: 1
-      }
-    ];
+  it('Should let an admin hand a match back to its first owner.', () => {
     return request
-      .delete("/matches/")
+      .put("/matches/")
       .set("Content-Type", "application/json")
       .set("Accept", "application/json")
-      .send(updatedMatchData)
-      .expect(403)
+      .send([{ match_id: 1, user_id: 1 }])
+      .expect(200)
       .expect((result) => {
-        expect(result.body.message).toMatch(/not authorized/);
+        expect(result.body.message).toMatch(/successfully/);
       });
   });
   it('Should create a single match that is ready to be cancelled.', () => {

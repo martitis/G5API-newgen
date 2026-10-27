@@ -72,7 +72,7 @@ describe("Test the playerstats routes", () => {
       })
       .expect(200);
   });
-  it('Should update a player stat in the third match with invalid API key.', () => {
+  it('Should refuse a player stat update with an invalid API key from a caller that is not signed in.', () => {
     // Min required data.
     let statData = [{
       match_id: 3,
@@ -85,17 +85,17 @@ describe("Test the playerstats routes", () => {
       damage: 139,
       firstkill_t: 1
     }];
-    return request
+    // Admins may write stats without the key; a caller that isn't signed in is refused.
+    return agent(app)
       .put('/playerstats/')
       .set("Content-Type", "application/json")
       .set("Accept", "application/json")
       .send(statData)
       .expect((result) => {
-        expect(result.body.message).toMatch(/not authorized/);
-      })
-      .expect(403);
+        expect([401, 403]).toContain(result.status);
+      });
   });
-  it('Should insert an invalid player stat into the third match', () => {
+  it('Should refuse a player stat with an invalid API key from a caller that is not signed in', () => {
     // Min required data.
     let statData = [{
       match_id: 3,
@@ -105,15 +105,15 @@ describe("Test the playerstats routes", () => {
       name: 'Test Admin',
       api_key: 'NOTAGOODAPIKEY'
     }];
-    return request
+    // Admins may write stats without the key; a caller that isn't signed in is refused.
+    return agent(app)
       .post('/playerstats/')
       .set("Content-Type", "application/json")
       .set("Accept", "application/json")
       .send(statData)
       .expect((result) => {
-        expect(result.body.message).toMatch(/not authorized/);
-      })
-      .expect(403);
+        expect([401, 403]).toContain(result.status);
+      });
   });
   it('Should attempt to delete a live match.', () => {
     // Min required data.
