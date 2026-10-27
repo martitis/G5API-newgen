@@ -36,7 +36,7 @@ async function editableTournament(req: any, res: any): Promise<RowDataPacket | n
     res.status(404).json({ message: "Tournament not found." });
     return null;
   }
-  if (rows[0].user_id !== req.user.id && !Utils.superAdminCheck(req.user)) {
+  if (rows[0].user_id !== req.user.id && !Utils.adminCheck(req.user)) {
     res.status(403).json({ message: "User is not authorized to perform action." });
     return null;
   }

@@ -94,6 +94,20 @@ export async function resolveUser(req: Request, res: Response, next: NextFunctio
   }
 }
 
+/** Game servers are managed by super admins only: creating, changing or deleting one, reading its RCON password and
+ * the raw RCON console (which can run any server command). Admins do everything else, including running matches. */
+export function requireSuperAdmin(req: Request, res: Response, next: NextFunction): void {
+  if (!req.user) {
+    res.status(401).json({ message: "Not logged in." });
+    return;
+  }
+  if (!Utils.superAdminCheck(req.user)) {
+    res.status(403).json({ message: "Only super admins can manage game servers." });
+    return;
+  }
+  next();
+}
+
 /** Writes anyone signed in (or the game server) may make; everything else needs an admin. */
 const OPEN_WRITES: Array<{ method: string; path: RegExp; signedIn: boolean }> = [
   // Signing in and out.

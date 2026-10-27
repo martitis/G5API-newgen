@@ -191,7 +191,7 @@ export async function createQueue(user: Express.User, body: Record<string, any>)
   if (serverId) {
     const server: RowDataPacket[] = await db.query("SELECT user_id, public_server FROM game_server WHERE id = ?", [serverId]);
     if (!server.length) throw new PugError("Server not found.", 404);
-    if (server[0].user_id !== user.id && !truthy(server[0].public_server) && !Utils.superAdminCheck(user)) {
+    if (server[0].user_id !== user.id && !truthy(server[0].public_server) && !Utils.adminCheck(user)) {
       throw new PugError("User does not own this server.", 403);
     }
   }
@@ -441,7 +441,7 @@ export async function loadMatch(queueId: number): Promise<void> {
 /** Owner or super admin: retry a failed load, or cancel the queue. */
 export async function manageQueue(queueId: number, user: Express.User, action: "retry" | "cancel"): Promise<void> {
   const queue = await queueRow(queueId);
-  if (queue.user_id !== user.id && !Utils.superAdminCheck(user)) {
+  if (queue.user_id !== user.id && !Utils.adminCheck(user)) {
     throw new PugError("User is not authorized to perform action.", 403);
   }
   if (action === "retry") {

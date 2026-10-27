@@ -36,6 +36,7 @@ import GlobalEmitter from "../../utility/emitter.js";
 
 import logger from "../../utility/logger.js";
 import { checkMatch, dismissServerState, getServerState } from "../../services/heartbeat.js";
+import { requireSuperAdmin } from "../../utility/access.js";
 /**
  * @swagger
  *
@@ -439,6 +440,8 @@ router.post(
 router.put(
   "/:match_id/rcon/",
   Utils.ensureAuthenticated,
+  // The raw console can run any server command (even change the RCON password), so it counts as managing the server.
+  requireSuperAdmin,
   audited("match.rcon", { detail: (req) => String(firstBody(req).rcon_command ?? "") }),
   async (req, res, next) => {
     try {

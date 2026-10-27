@@ -414,9 +414,9 @@ class Utils {
     serverCheck: boolean = false
   ): Promise<AccessMessage | null> {
     try {
-      let adminCheck: boolean = onlyAdmin
-        ? this.adminCheck(user)
-        : this.superAdminCheck(user);
+      // Admins (and super admins) may act on any match; onlyAdmin is kept for the callers' readability.
+      void onlyAdmin;
+      const adminCheck: boolean = this.adminCheck(user);
       let retMessage: AccessMessage | null = null;
       retMessage = await this.checkIfMatchExists(matchid);
 
@@ -438,7 +438,7 @@ class Utils {
         const serverRow = await db.query(currentServerInfo, [
           matchRow[0].server_id
         ]);
-        if (!this.superAdminCheck(user) && serverRow[0]?.user_id != user.id) {
+        if (!this.adminCheck(user) && serverRow[0]?.user_id != user.id) {
           retMessage = {
             status: 403,
             message: "User is not authorized to perform action."

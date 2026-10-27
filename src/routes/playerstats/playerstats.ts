@@ -630,7 +630,7 @@ router.post("/", Utils.ensureAuthenticated, async (req, res, next) => {
     } else if (
       req.user &&
       matchRow[0].mtch_api_key != req.body[0].api_key &&
-      !Utils.superAdminCheck(req.user)
+      !Utils.adminCheck(req.user)
     ) {
       res
         .status(403)
@@ -756,7 +756,7 @@ router.put("/", Utils.ensureAuthenticated, async (req, res, next) => {
     } else if (
       req.user &&
       matchRow[0].mtch_api_key != req.body[0].api_key &&
-      !Utils.superAdminCheck(req.user)
+      !Utils.adminCheck(req.user)
     ) {      
       res
         .status(403)
@@ -896,7 +896,7 @@ router.delete("/", Utils.ensureAuthenticated, async (req, res, next) => {
       return;
     } else if (
       matchRow[0].user_id != req.user!.id &&
-      !Utils.superAdminCheck(req.user!)
+      !Utils.adminCheck(req.user!)
     ) {
       res
         .status(403)
