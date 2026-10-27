@@ -285,6 +285,11 @@ Facts below were checked against MatchZy's source (MatchManagement.cs, ReadySyst
   - server addresses only for admins or a live match's players and spectators; `/servers/available` is admin only
   - the panel hides create/edit controls from non-admins; tests cover the guard, fresh config lists, a read-only
     account without Steam, immediate promotion and demotion, and unproven Steam IDs
+- [x] **5.11 Admins versus super admins** (user request, 2026-10-27): admins do everything (any match, team, season,
+  tournament, PUG, stats, user admin role and password reset, the `/admin` page) except game servers. Only super admins
+  create, edit or delete servers, read RCON passwords, use the raw RCON console, grant super admin, or change a super
+  admin's account (`access.requireSuperAdmin`). Servers page: "Check all" runs the status check on every server and
+  shows the results in a dialog
 
 ## Phase 6: Ops
 - [x] Node 22 LTS (`engines` >=22.12, `.nvmrc`, Dockerfile `node:22-alpine`); pm2 `prodrun.json` with

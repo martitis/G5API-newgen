@@ -199,21 +199,8 @@ describe("Test the team routes", () => {
         expect(result.body.message).toMatch(/successfully/);
       });
   });
-  it('Should delete a team it doesn\'t own.', () => {
-    let deleteTeamData = [{
-      team_id: 2
-    }];
-    return request
-      .delete("/teams/")
-      .set("Content-Type", "application/json")
-      .set("Accept", "application/json")
-      .send(deleteTeamData)
-      .expect(403)
-      .expect((result) => {
-        expect(result.body.message).toMatch(/not authorized/);
-      });
-  });
-  it('Should update the team it no longer owns.', () => {
+  // Admins manage every team, not only their own.
+  it('Should update a team it no longer owns, as an admin.', () => {
     let updateTeamData = [{
       id: 2,
       user_id: 1
@@ -223,9 +210,21 @@ describe("Test the team routes", () => {
       .set("Content-Type", "application/json")
       .set("Accept", "application/json")
       .send(updateTeamData)
-      .expect(403)
+      .expect(200)
       .expect((result) => {
-        expect(result.body.message).toMatch(/not authorized/);
+        expect(result.body.message).toMatch(/successfully/);
+      });
+  });
+  it('Should delete a team it doesn\'t own, as an admin.', async () => {
+    await request.put("/teams/").set("Content-Type", "application/json").send([{ id: 2, user_id: 2 }]).expect(200);
+    return request
+      .delete("/teams/")
+      .set("Content-Type", "application/json")
+      .set("Accept", "application/json")
+      .send([{ team_id: 2 }])
+      .expect(200)
+      .expect((result) => {
+        expect(result.body.message).toMatch(/successfully/);
       });
   });
   it('Should delete a team it doesn\'t exist.', () => {

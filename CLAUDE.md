@@ -115,6 +115,10 @@ Docs: https://shobhit-pathak.github.io/MatchZy/ (commands, configuration, match 
   through only for a signed-in admin, or for the short `OPEN_WRITES` allowlist (login/register/logout, the MatchZy
   `/v2` callbacks, PUG join/leave/ready, `PUT /users` for your own account). Regular users are read only, and reads
   must not expose sensitive data (server addresses, keys, other users' accounts). Add to `OPEN_WRITES` only deliberately.
+- **Admin vs super admin:** admins may change everything (any owner's matches, teams, seasons, tournaments, PUGs, the
+  admin role of users) except game servers. Server create/edit/delete, `GET /servers/:id/rcon`, the raw RCON console
+  (`PUT /matches/:id/rcon`), granting super admin and editing a super admin's account are super admin only
+  (`access.requireSuperAdmin`).
 - Every mutating route has `Utils.ensureAuthenticated` plus an explicit owner/admin check. Never `req.user && …`, which
   skips the check for anonymous users. State-changing actions are POST/PUT/DELETE, never GET (CSRF).
 - Every value interpolated into an RCON command goes through `safeRconArg()` / the SteamID64 check in
