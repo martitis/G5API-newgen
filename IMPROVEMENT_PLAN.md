@@ -290,6 +290,9 @@ Facts below were checked against MatchZy's source (MatchManagement.cs, ReadySyst
   create, edit or delete servers, read RCON passwords, use the raw RCON console, grant super admin, or change a super
   admin's account (`access.requireSuperAdmin`). Servers page: "Check all" runs the status check on every server and
   shows the results in a dialog
+- [x] **5.12 Groups + playoff tournaments** (user request, 2026-10-27): format `groups_playoff`, snake-seeded round
+  robin groups (`group_count`), then the top `group_advance` of each group play a single elimination playoff, drawn
+  automatically once every group match is played (A1 v B2, B1 v A2). Bracket byes are no longer drawn as matches
 
 ## Phase 6: Ops
 - [x] Node 22 LTS (`engines` >=22.12, `.nvmrc`, Dockerfile `node:22-alpine`); pm2 `prodrun.json` with

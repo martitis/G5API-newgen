@@ -1,11 +1,12 @@
-/** Tournament brackets as pure data: generation (single/double elimination, round robin, Swiss pairings),
+/** Tournament brackets as pure data: generation (single/double elimination, round robin, Swiss pairings,
+ * round robin groups followed by a single elimination playoff),
  * resolution (which teams play each match once results are known, byes included) and standings.
  * No database access, so everything here is unit tested.
  * @module services/bracket
  */
 
-export type TournamentFormat = "single_elim" | "double_elim" | "round_robin" | "swiss";
-export type BracketName = "upper" | "lower" | "grand_final" | "round_robin" | "swiss";
+export type TournamentFormat = "single_elim" | "double_elim" | "round_robin" | "swiss" | "groups_playoff";
+export type BracketName = "upper" | "lower" | "grand_final" | "round_robin" | "swiss" | "group";
 
 /** Where a slot's team comes from. null = nobody (a bye). */
 export type Source =
@@ -389,8 +390,81 @@ function greedyPairs(pool: Standing[]): [Standing, Standing][] {
   return pairs;
 }
 
-/** All nodes of a format at the start (Swiss: only round 1). */
-export function generateBracket(format: TournamentFormat, teamIds: number[]): BracketNode[] {
+/**
+ * Splits seeds 1..teamCount into groups by snake seeding (A gets 1, B 2, ... then back: the last group gets the
+ * next seed), so the groups are as even as the seeding allows. Returns the seed numbers of each group.
+ */
+export function groupSeeds(teamCount: number, groupCount: number): number[][] {
+  const groups: number[][] = Array.from({ length: groupCount }, () => []);
+  for (let seed = 1; seed <= teamCount; seed++) {
+    const lap = Math.floor((seed - 1) / groupCount);
+    const index = (seed - 1) % groupCount;
+    groups[lap % 2 === 0 ? index : groupCount - 1 - index].push(seed);
+  }
+  return groups;
+}
+
+/** The group number (1-based) of a group stage node, from its key "group<g>-<round>-<position>". */
+export const groupOfKey = (nodeKey: string): number | null => {
+  const found = /^group(\d+)-/.exec(nodeKey);
+  return found ? Number(found[1]) : null;
+};
+
+/** Checks a groups + playoff setup: every group plays (2+ teams) and the playoff has 2+ teams. */
+export function groupStageError(teamCount: number, groupCount: number, advance: number): string | null {
+  if (groupCount < 1 || teamCount < groupCount * 2) return "Every group needs at least 2 teams.";
+  const smallest = Math.floor(teamCount / groupCount);
+  if (advance < 1 || advance > smallest) return `At most ${smallest} teams per group can go to the playoff.`;
+  if (groupCount * advance < 2) return "The playoff needs at least 2 teams.";
+  return null;
+}
+
+/** The group stage: one round robin per group, keyed "group<g>-<round>-<position>", rounds played in step. */
+export function groupStage(teamCount: number, groupCount: number): BracketNode[] {
+  const nodes: BracketNode[] = [];
+  groupSeeds(teamCount, groupCount).forEach((members, index) => {
+    const local = (source: Source): Source =>
+      source?.type === "seed" ? { type: "seed", seed: members[source.seed - 1] } : source;
+    for (const node of roundRobin(members.length)) {
+      nodes.push({
+        ...node,
+        key: `group${index + 1}-${node.round}-${node.position}`,
+        bracket: "group",
+        sources: [local(node.sources[0]), local(node.sources[1])]
+      });
+    }
+  });
+  return nodes.sort((a, b) => a.round - b.round);
+}
+
+/**
+ * The playoff seeding from the group tables: every group winner, then every runner-up, and so on. With the
+ * standard bracket order a group winner meets a runner-up of another group first (A1 v B2, B1 v A2).
+ */
+export function playoffSeeds(groupTables: Standing[][], advance: number): number[] {
+  const seeds: number[] = [];
+  for (let place = 0; place < advance; place++) {
+    for (const table of groupTables) if (table[place]) seeds.push(table[place].team_id);
+  }
+  return seeds;
+}
+
+/** The single elimination playoff for the given teams (best first), with fixed team slots. */
+export function playoffBracket(teamIds: number[]): BracketNode[] {
+  return singleElimination(teamIds.length).map((node) => ({
+    ...node,
+    sources: node.sources.map((source) =>
+      source?.type === "seed" ? { type: "team", team_id: teamIds[source.seed - 1] } : source
+    ) as [Source, Source]
+  }));
+}
+
+/** All nodes of a format at the start (Swiss: only round 1; groups + playoff: the group stage). */
+export function generateBracket(
+  format: TournamentFormat,
+  teamIds: number[],
+  options: { groups?: number; advance?: number } = {}
+): BracketNode[] {
   switch (format) {
     case "single_elim":
       return singleElimination(teamIds.length);
@@ -401,5 +475,11 @@ export function generateBracket(format: TournamentFormat, teamIds: number[]): Br
     case "swiss":
       if (teamIds.length < 2) throw new Error("Swiss needs at least 2 teams.");
       return swissPairings(1, standings(teamIds, []));
+    case "groups_playoff": {
+      const groups = options.groups ?? 1;
+      const error = groupStageError(teamIds.length, groups, options.advance ?? 2);
+      if (error) throw new Error(error);
+      return groupStage(teamIds.length, groups);
+    }
   }
 }

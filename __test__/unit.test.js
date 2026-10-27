@@ -17,6 +17,11 @@ import { tmpdir } from "os";
 import { join } from "path";
 import {
   doubleElimination,
+  generateBracket,
+  groupOfKey,
+  groupSeeds,
+  playoffBracket,
+  playoffSeeds,
   resolveBracket,
   roundRobin,
   seedOrder,
@@ -661,6 +666,72 @@ describe("parseStatusPlayers", () => {
 
   it("returns nothing without a players section", () => {
     expect(parseStatusPlayers("Unknown command\r\n")).toEqual([]);
+  });
+});
+
+describe("groups + playoff", () => {
+  it("snake-seeds the groups", () => {
+    expect(groupSeeds(6, 2)).toEqual([[1, 4, 5], [2, 3, 6]]);
+    expect(groupSeeds(8, 4)).toEqual([[1, 8], [2, 7], [3, 6], [4, 5]]);
+  });
+
+  it("plays a round robin inside each group only", () => {
+    const nodes = generateBracket("groups_playoff", [10, 11, 12, 13, 14, 15], { groups: 2, advance: 2 });
+    // 2 groups of 3: 3 matches each.
+    expect(nodes).toHaveLength(6);
+    const groups = groupSeeds(6, 2);
+    for (const node of nodes) {
+      const members = groups[groupOfKey(node.key) - 1];
+      expect(node.bracket).toBe("group");
+      for (const source of node.sources) expect(members).toContain(source.seed);
+    }
+  });
+
+  it("refuses groups that are too small or send too many teams on", () => {
+    expect(() => generateBracket("groups_playoff", [1, 2, 3], { groups: 2, advance: 1 })).toThrow(/at least 2 teams/);
+    expect(() => generateBracket("groups_playoff", [1, 2, 3, 4, 5, 6], { groups: 2, advance: 4 })).toThrow(/At most 3/);
+    expect(() => generateBracket("groups_playoff", [1, 2, 3, 4], { groups: 1, advance: 1 })).toThrow(/at least 2 teams/);
+  });
+
+  it("plays 6 teams through 2 groups of 3 into a 4 team playoff", () => {
+    const seeds = [100, 101, 102, 103, 104, 105];
+    const results = {};
+    const groupNodes = generateBracket("groups_playoff", seeds, { groups: 2, advance: 2 });
+    // The better seed (lower id) wins every match.
+    for (const node of resolveBracket(groupNodes, seeds, {})) results[node.key] = { winner_id: Math.min(node.team1_id, node.team2_id) };
+    const played = resolveBracket(groupNodes, seeds, results);
+    expect(played.every((node) => node.status === "done")).toBe(true);
+    const tables = groupSeeds(6, 2).map((members, index) =>
+      standings(
+        members.map((seed) => seeds[seed - 1]),
+        played
+          .filter((node) => groupOfKey(node.key) === index + 1)
+          .map((node) => ({ ...node, team1_maps: 0, team2_maps: 0 }))
+      )
+    );
+    // Group A: seeds 1, 4, 5; group B: seeds 2, 3, 6.
+    expect(tables.map((table) => table.map((row) => row.team_id))).toEqual([
+      [100, 103, 104],
+      [101, 102, 105]
+    ]);
+    const playoff = playoffBracket(playoffSeeds(tables, 2));
+    const semis = resolveBracket(playoff, [], {}).filter((node) => node.round === 1);
+    expect(semis.map((node) => [node.team1_id, node.team2_id])).toEqual([
+      [100, 102],
+      [101, 103]
+    ]);
+    expect(playoff.filter((node) => node.final)).toHaveLength(1);
+  });
+
+  it("seeds the playoff so group winners meet another group's runner-up", () => {
+    const row = (team_id) => ({ team_id });
+    const seeds = playoffSeeds([[row(1), row(2), row(3)], [row(4), row(5), row(6)]], 2);
+    expect(seeds).toEqual([1, 4, 2, 5]);
+    const firstRound = resolveBracket(playoffBracket(seeds), [], {}).filter((node) => node.round === 1);
+    expect(firstRound.map((node) => [node.team1_id, node.team2_id])).toEqual([
+      [1, 5],
+      [4, 2]
+    ]);
   });
 });
 

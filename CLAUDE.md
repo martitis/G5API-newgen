@@ -65,7 +65,8 @@ All scripts are cross-platform (cross-env plus `scripts/test-admin.mjs`, no sed/
   (`match_audit`) after the response; put it on every new write/admin route. `detail` must never hold secrets.
 - `src/routes/admin.ts`: super-admin `/admin/users` and `/admin/audit`
 - Tournaments: `src/services/bracket.ts` (pure, unit tested: single/double elimination with byes, round robin, Swiss
-  pairings, `resolveBracket`, standings), `src/services/tournaments.ts` (DB: start, `refreshTournament`,
+  pairings, round-robin groups then a single elimination playoff (`groups_playoff`, playoff drawn by `refreshTournament`
+  once every group match is done), `resolveBracket`, standings), `src/services/tournaments.ts` (DB: start, `refreshTournament`,
   `onMatchChanged` called on series_end/forfeit/cancel/restart), `src/routes/tournaments.ts`. Slot matches are
   created through `POST /matches` with `tournament_match_id` (checked: slot ready and free, same teams).
 - PUG queues: `src/services/pugs.ts` (join, ready check with timeout sweep, formation, `loadMatch`),

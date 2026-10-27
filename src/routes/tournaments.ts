@@ -99,7 +99,9 @@ router.get("/", async (req, res, next) => {
  *   get:
  *     description: >
  *       A tournament with its seeded teams, bracket nodes (teams, status pending/ready/live/done/bye/empty,
- *       linked match and series score) and, for round robin and Swiss, the standings.
+ *       linked match and series score) and, for round robin and Swiss, the standings. Groups + playoff - each
+ *       group node has its group number, groups holds each group's table, and the playoff (upper bracket) nodes
+ *       appear once every group match is played.
  *     produces:
  *       - application/json
  *     parameters:
@@ -190,8 +192,8 @@ router.get("/:tournament_id/stream", async (req, res, next) => {
  *   post:
  *     description: >
  *       Creates a tournament in draft. Admins only (they run the matches). Body - name, format
- *       (single_elim, double_elim, round_robin, swiss), season_id, team_ids (in seed order), settings
- *       (best_of, final_best_of, swiss_rounds, map_pool, players_per_team, min_players_to_ready, side_type, skip_veto,
+ *       (single_elim, double_elim, round_robin, swiss, groups_playoff), season_id, team_ids (in seed order), settings
+ *       (best_of, final_best_of, swiss_rounds, group_count and group_advance for groups_playoff, map_pool, players_per_team, min_players_to_ready, side_type, skip_veto,
  *       challonge_url - a Challonge tournament id that results are reported to with your Challonge API key).
  *     produces:
  *       - application/json
