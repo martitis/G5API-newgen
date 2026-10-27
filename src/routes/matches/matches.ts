@@ -1864,6 +1864,17 @@ export async function createMatchHandler(req: Request, res: Response, next: Next
         res.status(409).json({ message: "This tournament match isn't ready or already has a match." });
         return;
       }
+      // Round robin and group nodes are all ready at once: a team plays one tournament match at a time.
+      const busy: RowDataPacket[] = await db.query(
+        "SELECT tm.id FROM tournament_match tm JOIN `match` m ON m.id = tm.match_id " +
+          "WHERE tm.tournament_id = ? AND tm.id <> ? AND m.end_time IS NULL AND NOT COALESCE(m.cancelled, 0) " +
+          "AND NOT COALESCE(m.forfeit, 0) AND (tm.team1_id IN (?, ?) OR tm.team2_id IN (?, ?)) LIMIT 1",
+        [node.tournament_id, node.id, node.team1_id, node.team2_id, node.team1_id, node.team2_id]
+      );
+      if (busy.length) {
+        res.status(409).json({ message: "A team of this pairing is still playing another tournament match." });
+        return;
+      }
       if (Number(req.body[0].team1_id) !== node.team1_id || Number(req.body[0].team2_id) !== node.team2_id) {
         res.status(412).json({ message: "The teams don't match the tournament pairing." });
         return;

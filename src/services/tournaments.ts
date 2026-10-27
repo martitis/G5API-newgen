@@ -322,6 +322,8 @@ export async function loadTournament(tournamentId: number): Promise<Record<strin
       // "live" while a linked match is being played.
       status: row.status === "ready" && match && match.end_time == null ? "live" : row.status,
       match_id: row.match_id,
+      // Only the id: the address comes from GET /servers/:id, which checks who may see it.
+      server_id: match ? match.server_id : null,
       best_of: truthy(row.is_final) ? parseSettings(tournament.settings).final_best_of : parseSettings(tournament.settings).best_of,
       score: match
         ? [Number(same ? match.team1_score : match.team2_score) || 0, Number(same ? match.team2_score : match.team1_score) || 0]
