@@ -219,11 +219,11 @@ Facts below were checked against MatchZy's source (MatchManagement.cs, ReadySyst
   - [x] earlier in the match admin menu: force pause/unpause, end with a winner (forfeit), cancel, restart,
     add/remove player, backup restore, change server, MatchZy config preview, send panel address
   - [x] match control panel (`POST /matches/:id/control`, `utility/matchcontrol.ts`, unit tested, audited): force start,
-    skip veto, knife/playout/whitelist toggles, ready required, add ready time, change map, rename teams,
+    skip veto, knife/playout/whitelist toggles, change map, rename teams,
     `css_asay` with templates, curated live cvars
   - [x] server health card (`GET /matches/:id/server/status`: RCON reachable + get5_status); RCON console with history
-  - [ ] restore by round from `match_round` (`css_restore N`). **Blocked** until the server runs a MatchZy build with
-    PR #422 (CS2 1.41.9.1 rejects MatchZy's absolute round-backup paths, so no round files are written; see Phase 6)
+  - [ ] restore by round from `match_round` (`css_restore N`, works over RCON). Waits for the game server to run
+    **MatchZy 0.9.2** (released 2026-10-18 with PR #422; older builds write no round backups on CS2 1.41.9.1)
   - [x] connected players panel (`GET /matches/:id/server/players` from CS2's `status`, `parseStatusPlayers` unit
     tested; kick via `POST /server/kick` = `kickid`). Move team / late sub stay in the match menu (by Steam ID),
     since `status` has no Steam IDs. **Check against a live server:** the `status` row format was written from
@@ -275,12 +275,27 @@ Facts below were checked against MatchZy's source (MatchManagement.cs, ReadySyst
   - Steam users can add a username and password on their profile (`PUT /users` with `username`)
   - `GET /auth/options` hides panel accounts when they're off
   - fixed a super admin being logged out when editing their own profile
+- [x] **5.10 Strict permissions** (user request, 2026-10-25):
+  - writes are deny by default (`utility/access.ts writeGuard`): only admins create or change anything; regular users
+    are read only (except their own account and PUG queues)
+  - roles are reloaded from the database on every request, so a role change applies at once; a deleted account is
+    signed out
+  - the admin config lists are read from the file at each Steam login (no restart), no promotion at startup
+  - registration without Steam (`user.steam_id` nullable)
+  - server addresses only for admins or a live match's players and spectators; `/servers/available` is admin only
+  - the panel hides create/edit controls from non-admins; tests cover the guard, fresh config lists, a read-only
+    account without Steam, immediate promotion and demotion, and unproven Steam IDs
+- [x] **5.11 Admins versus super admins** (user request, 2026-10-27): admins do everything (any match, team, season,
+  tournament, PUG, stats, user admin role and password reset, the `/admin` page) except game servers. Only super admins
+  create, edit or delete servers, read RCON passwords, use the raw RCON console, grant super admin, or change a super
+  admin's account (`access.requireSuperAdmin`). Servers page: "Check all" runs the status check on every server and
+  shows the results in a dialog
 
 ## Phase 6: Ops
 - [x] Node 22 LTS (`engines` >=22.12, `.nvmrc`, Dockerfile `node:22-alpine`); pm2 `prodrun.json` with
   `LOG_LEVEL` and a memory restart; [DEPLOY.md](DEPLOY.md) (install, config keys, updates, proxy settings for SSE and
   demo uploads, `/health`, logs, Docker, security checklist)
-- [x] **Game server requirements** documented in DEPLOY.md (MatchZy with PR #422, `-allow_round_backup_files`,
+- [x] **Game server requirements** documented in DEPLOY.md (MatchZy 0.9.2 or newer, `-allow_round_backup_files`,
   `apiURL` reachable, "Send panel address to server", join password)
 - [x] `/health` (DB check, 503 when down, no session); pino logger (`utility/logger.ts`, redacts auth headers and
   cookies) for HTTP logs in production, the error handler and unhandled rejections; morgan once in development

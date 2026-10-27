@@ -35,9 +35,13 @@ All scripts are cross-platform (cross-env plus `scripts/test-admin.mjs`, no sed/
 - `server.dbKey` must be exactly 16 bytes (the AES key that encrypts RCON passwords and API keys in the DB).
 - `server.apiURL` is the public base URL that the game server calls back on. Always build URLs from it with
   `Utils.apiUrl("/path")`, which handles trailing slashes.
-- `admins.steam_ids` / `super_admins.steam_ids` grant their role on every Steam login (`user.roles_from_config = 1`);
-  leaving a list removes the role only when it came from the list. Roles a super admin sets in the panel
-  (`PUT /users`, `roles_from_config = 0`) survive logins. Only admins (admin or super admin) can create matches.
+- `admins.steam_ids` / `super_admins.steam_ids` are read **from the config file at each Steam login** (no restart
+  needed; `access.configRoleLists`) and grant their role (`user.roles_from_config = 1`); leaving a list removes the
+  role only when it came from the list. Roles a super admin sets in the panel (`PUT /users`, `roles_from_config = 0`)
+  survive logins.
+- **Permissions:** the session stores only the user id; `access.loadUser` reloads the user and roles from the DB on
+  every request, so role changes apply at once. Accounts with `steam_verified = 0` never count as admin. Accounts can
+  be registered without a Steam ID (`user.steam_id` is nullable).
 - The mock Steam login (every visitor becomes the test user) needs `NODE_ENV=test` **and** `G5API_MOCK_AUTH=1`;
   the jest configs set both.
 - Logging: `src/utility/logger.ts` (pino, JSON; `LOG_LEVEL`). HTTP requests are logged by morgan in development and
@@ -107,6 +111,14 @@ Docs: https://shobhit-pathak.github.io/MatchZy/ (commands, configuration, match 
 
 ## Conventions (must follow)
 - SQL uses `?` placeholders only, through `db.query`.
+- Writes are **deny by default**: `access.writeGuard` (in `app.ts`, before all routers) lets a POST/PUT/PATCH/DELETE
+  through only for a signed-in admin, or for the short `OPEN_WRITES` allowlist (login/register/logout, the MatchZy
+  `/v2` callbacks, PUG join/leave/ready, `PUT /users` for your own account). Regular users are read only, and reads
+  must not expose sensitive data (server addresses, keys, other users' accounts). Add to `OPEN_WRITES` only deliberately.
+- **Admin vs super admin:** admins may change everything (any owner's matches, teams, seasons, tournaments, PUGs, the
+  admin role of users) except game servers. Server create/edit/delete, `GET /servers/:id/rcon`, the raw RCON console
+  (`PUT /matches/:id/rcon`), granting super admin and editing a super admin's account are super admin only
+  (`access.requireSuperAdmin`).
 - Every mutating route has `Utils.ensureAuthenticated` plus an explicit owner/admin check. Never `req.user && …`, which
   skips the check for anonymous users. State-changing actions are POST/PUT/DELETE, never GET (CSRF).
 - Every value interpolated into an RCON command goes through `safeRconArg()` / the SteamID64 check in

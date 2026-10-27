@@ -45,6 +45,7 @@ import vetosidesRouter from "./src/routes/vetosides.js";
 import passport from "./src/utility/auth.js";
 import Utils from "./src/utility/utils.js";
 import logger from "./src/utility/logger.js";
+import { resolveUser, writeGuard } from "./src/utility/access.js";
 import { db } from "./src/services/db.js";
 import {router as v2Router} from "./src/routes/v2/api.js";
 import {router as v2DemoRouter} from "./src/routes/v2/demoapi.js";
@@ -174,6 +175,10 @@ app.use(
   })
 );
 
+// API-key requests get their user here; then every write needs an admin unless it's on the short allowlist.
+app.use(resolveUser);
+app.use(writeGuard);
+
 // Server-sent event streams: a comment line every 25s keeps idle connections open through nginx/Caddy and
 // browsers. SSE clients ignore comment lines.
 app.use((req, res, next) => {
@@ -283,7 +288,8 @@ app.post('/logout', function(req, res, next) {
 // Brute-force protection: 10 attempts per IP per 15 minutes.
 const authRateLimit = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 10,
+  // The test suites sign in and register far more than 10 times from one address.
+  limit: process.env.NODE_ENV === "test" ? 1000 : 10,
   standardHeaders: true,
   legacyHeaders: false,
   message: { message: "Too many attempts, please try again later." }

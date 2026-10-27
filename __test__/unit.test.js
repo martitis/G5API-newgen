@@ -11,6 +11,10 @@ import { eventProblem } from "../src/services/eventschemas.js";
 import { forMatch } from "../src/utility/emitter.js";
 import { assessServerState, nextState } from "../src/services/serverstate.js";
 import { passwordProblem, usernameProblem } from "../src/utility/credentials.js";
+import { configRoleLists, writeAllowed } from "../src/utility/access.js";
+import { mkdtempSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import {
   doubleElimination,
   resolveBracket,
@@ -152,10 +156,13 @@ describe("Routes refuse anonymous and malformed requests before touching the dat
   it.each([
     ["get", "/matches/1/cancel"],
     ["get", "/matches/1/pause"],
-    ["get", "/logout"],
-    ["post", "/match/1/finish"]
+    ["get", "/logout"]
   ])("%s %s no longer exists", (method, path) => {
     return request[method](path).expect(404);
+  });
+
+  it("refuses an anonymous write to any path, even one that doesn't exist", () => {
+    return request.post("/match/1/finish").expect(401);
   });
 
   it("rejects backup uploads with a path in the headers", () => {
@@ -608,8 +615,6 @@ describe("controlCommand (admin match control)", () => {
     ["toggle_knife", {}, "css_roundknife"],
     ["toggle_playout", {}, "css_playout"],
     ["toggle_whitelist", {}, "css_whitelist"],
-    ["ready_required", { count: 0 }, "css_readyrequired 0"],
-    ["add_ready_time", { seconds: "120" }, "matchzy_add_ready_time 120"],
     ["change_map", { map: "de_nuke" }, "css_map de_nuke"],
     ["team_name", { team: 2, name: " Team Liquid " }, "css_team2 Team Liquid"],
     ["say", { message: "Tech pause, 5 min" }, "css_asay Tech pause, 5 min"],
@@ -622,7 +627,7 @@ describe("controlCommand (admin match control)", () => {
     ["say", { message: 'hi"; quit' }],
     ["say", { message: "x".repeat(121) }],
     ["team_name", { team: 3, name: "A" }],
-    ["ready_required", { count: 11 }],
+    ["ready_required", { count: 2 }],
     ["change_map", { map: "de_nuke; quit" }],
     ["cvar", { cvar: "sv_cheats", value: 1 }],
     ["cvar", { cvar: "mp_freezetime", value: 61 }]
@@ -775,5 +780,50 @@ describe("local login rules", () => {
     expect(passwordProblem("long enough")).toBeNull();
     expect(passwordProblem("short")).toMatch(/at least 8/);
     expect(passwordProblem("x".repeat(73))).toMatch(/at most 72/);
+  });
+});
+
+describe("write guard (deny by default)", () => {
+  const admin = { admin: 1, super_admin: 0 };
+  const player = { admin: 0, super_admin: 0 };
+  it("lets anyone read, sign in and reach the game-server callbacks", () => {
+    expect(writeAllowed("GET", "/teams", undefined).ok).toBe(true);
+    expect(writeAllowed("POST", "/login", undefined).ok).toBe(true);
+    expect(writeAllowed("POST", "/register", undefined).ok).toBe(true);
+    expect(writeAllowed("POST", "/v2", undefined).ok).toBe(true);
+    expect(writeAllowed("POST", "/v2/demo", undefined).ok).toBe(true);
+  });
+  it("lets signed-in users join PUGs and edit their own account, nothing else", () => {
+    expect(writeAllowed("POST", "/pugs/4/join", player).ok).toBe(true);
+    expect(writeAllowed("PUT", "/users", player).ok).toBe(true);
+    for (const [method, path] of [["POST", "/teams"], ["PUT", "/teams"], ["DELETE", "/servers"], ["POST", "/matches"],
+      ["POST", "/matches/3/pause"], ["POST", "/users"], ["POST", "/templates"], ["POST", "/pugs"], ["POST", "/v2/other"]]) {
+      expect(writeAllowed(method, path, player)).toMatchObject({ ok: false, status: 403 });
+    }
+  });
+  it("needs a login for anything else, and an admin to write", () => {
+    expect(writeAllowed("POST", "/pugs/4/join", undefined)).toMatchObject({ ok: false, status: 401 });
+    expect(writeAllowed("POST", "/teams", undefined)).toMatchObject({ ok: false, status: 401 });
+    expect(writeAllowed("POST", "/teams", admin).ok).toBe(true);
+    expect(writeAllowed("DELETE", "/servers", { admin: 0, super_admin: 1 }).ok).toBe(true);
+  });
+});
+
+describe("config role lists", () => {
+  it("are read from the config file each time, without a restart", () => {
+    const dir = mkdtempSync(join(tmpdir(), "g5cfg-"));
+    const before = process.env.NODE_CONFIG_DIR;
+    process.env.NODE_CONFIG_DIR = dir;
+    try {
+      const write = (admins) => writeFileSync(join(dir, "test.json"), JSON.stringify({
+        admins: { steam_ids: admins }, super_admins: { steam_ids: "76561198000000001" }
+      }));
+      write("76561198000000002");
+      expect(configRoleLists()).toEqual({ admins: ["76561198000000002"], superAdmins: ["76561198000000001"] });
+      write("76561198000000003, not-a-steam-id");
+      expect(configRoleLists().admins).toEqual(["76561198000000003"]);
+    } finally {
+      process.env.NODE_CONFIG_DIR = before;
+    }
   });
 });

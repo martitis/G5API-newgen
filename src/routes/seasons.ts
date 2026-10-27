@@ -176,7 +176,7 @@ router.get(
     let seasons: RowDataPacket[];
     try {
       // Check if super admin, if they are use this query.
-      if (req.user && Utils.superAdminCheck(req.user)) {
+      if (req.user && Utils.adminCheck(req.user)) {
         sql =
           "SELECT s.id, s.user_id, s.name, s.start_date, s.end_date " +
           "FROM season s " +
@@ -416,7 +416,7 @@ router.put("/", Utils.ensureAuthenticated, audited("season.update", { target: (r
     return;
   } else if (
     seasonRow[0].user_id != req.user!.id &&
-    !Utils.superAdminCheck(req.user!)
+    !Utils.adminCheck(req.user!)
   ) {
     res
       .status(403)
@@ -514,7 +514,7 @@ router.delete("/", Utils.ensureAuthenticated, audited("season.delete", { target:
       return;
     } else if (
       seasonRow[0].user_id != req.user!.id &&
-      !Utils.superAdminCheck(req.user!)
+      !Utils.adminCheck(req.user!)
     ) {
       res
         .status(403)

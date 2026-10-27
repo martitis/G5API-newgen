@@ -4,12 +4,17 @@ import { checkServer } from "../src/services/heartbeat.js";
 import { db } from "../src/services/db.js";
 const request = agent(app);
 const password = "SUPER SECRET DON'T TELL";
+const mockSteamId = "76561198000000042";
+const setSuperAdmin = (on) =>
+  db.query("UPDATE user SET admin = 1, super_admin = ?, roles_from_config = 0 WHERE steam_id = ?", [on ? 1 : 0, mockSteamId]);
 
 describe("Test the game server routes.", () => {
-  beforeAll(() => {
-    return request.get("/auth/steam/return")
-      .expect(302);
+  // Game servers are managed by super admins only; the users suite left the test user a plain admin.
+  beforeAll(async () => {
+    await request.get("/auth/steam/return").expect(302);
+    await setSuperAdmin(true);
   });
+  afterAll(() => setSuperAdmin(false));
   it("Should return all servers depending on permission of user.", () => {
     return request
       .get("/servers")
@@ -144,29 +149,34 @@ describe("Test the game server routes.", () => {
         expect(result.body.rcon_password).toEqual(undefined);
       });
   });
-  it("Should not reveal the RCON password of a server we don't own.", () => {
+  it("Should reveal the RCON password of a server we don't own to a super admin.", () => {
     return request
       .get("/servers/2/rcon")
       .expect("Content-Type", /json/)
-      .expect(403);
+      .expect(200);
   });
-  it("Should try and fail to edit server 2.", () => {
-    let updatedServerData = [
-      {
-        display_name: "Temp Server #2 EDITED BAD ACT0R",
-        user_id: 1,
-        server_id: 2,
-      },
-    ];
-    return request
-      .put("/servers/")
-      .set("Content-Type", "application/json")
-      .set("Accept", "application/json")
-      .send(updatedServerData)
-      .expect(403)
-      .expect((result) => {
-        expect(result.body.message).toMatch(/not authorized/);
-      });
+  it("Should keep a plain admin away from RCON passwords and server management.", async () => {
+    await setSuperAdmin(false);
+    try {
+      const refused = "Only super admins can manage game servers.";
+      let res = await request.get("/servers/2/rcon").expect(403);
+      expect(res.body.message).toBe(refused);
+      res = await request
+        .put("/servers/")
+        .set("Content-Type", "application/json")
+        .send([{ display_name: "Temp Server #2 EDITED BAD ACT0R", user_id: 1, server_id: 2 }])
+        .expect(403);
+      expect(res.body.message).toBe(refused);
+      res = await request
+        .post("/servers/")
+        .set("Content-Type", "application/json")
+        .send([{ ip_string: "10.0.0.8", port: 27015, rcon_password: "x", display_name: "Nope" }])
+        .expect(403);
+      expect(res.body.message).toBe(refused);
+      await request.delete("/servers/").set("Content-Type", "application/json").send([{ server_id: 2 }]).expect(403);
+    } finally {
+      await setSuperAdmin(true);
+    }
   });
   it("Should reject an unknown practice action.", () => {
     return request

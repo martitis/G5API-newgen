@@ -46,7 +46,7 @@ async function ownEntry(req: any, res: any): Promise<RowDataPacket | null> {
     res.status(404).json({ message: "Scheduled match not found." });
     return null;
   }
-  if (rows[0].user_id !== req.user.id && !Utils.superAdminCheck(req.user)) {
+  if (rows[0].user_id !== req.user.id && !Utils.adminCheck(req.user)) {
     res.status(403).json({ message: "User is not authorized to perform action." });
     return null;
   }
@@ -69,7 +69,7 @@ async function ownEntry(req: any, res: any): Promise<RowDataPacket | null> {
  */
 router.get("/", Utils.ensureAuthenticated, async (req, res, next) => {
   try {
-    const everyone = Utils.superAdminCheck(req.user!);
+    const everyone = Utils.adminCheck(req.user!);
     const scope = everyone ? "" : "s.user_id = ? AND ";
     const args = everyone ? [] : [req.user!.id];
     const open: RowDataPacket[] = await db.query(

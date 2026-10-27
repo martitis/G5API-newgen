@@ -156,32 +156,8 @@ class Utils {
     next: NextFunction
   ) {
     try {
-      // Check the user based on API.
-      const apiKey = req.get("user-api") || req.body?.[0]?.user_api;
-      if (apiKey && typeof apiKey === "string") {
-        const [userId, providedKey] = apiKey.split(":");
-        let sqlQuery = "SELECT * FROM user WHERE id = ?";
-        const ourUser = await db.query(sqlQuery, [userId]);
-        if (ourUser.length > 0) {
-          let uncDb = Utils.decrypt(ourUser[0].api_key);
-          if (Utils.safeCompare(uncDb, providedKey)) {
-            let curUser = {
-              steam_id: ourUser[0].steam_id,
-              name: ourUser[0].name,
-              super_admin: ourUser[0].super_admin,
-              admin: ourUser[0].admin,
-              id: ourUser[0].id,
-              small_image: ourUser[0].small_image,
-              medium_image: ourUser[0].medium_image,
-              large_image: ourUser[0].large_image,
-              api_key: providedKey
-            };
-            req.user = curUser;
-            return next();
-          }
-        }
-      }
-      if (req.isAuthenticated()) {
+      // req.user is set by passport (session, reloaded from the database) or by access.resolveUser (API key).
+      if (req.user) {
         return next();
       }
       res.status(401).json({ message: "Not logged in." });
@@ -438,9 +414,9 @@ class Utils {
     serverCheck: boolean = false
   ): Promise<AccessMessage | null> {
     try {
-      let adminCheck: boolean = onlyAdmin
-        ? this.adminCheck(user)
-        : this.superAdminCheck(user);
+      // Admins (and super admins) may act on any match; onlyAdmin is kept for the callers' readability.
+      void onlyAdmin;
+      const adminCheck: boolean = this.adminCheck(user);
       let retMessage: AccessMessage | null = null;
       retMessage = await this.checkIfMatchExists(matchid);
 
@@ -462,7 +438,7 @@ class Utils {
         const serverRow = await db.query(currentServerInfo, [
           matchRow[0].server_id
         ]);
-        if (!this.superAdminCheck(user) && serverRow[0]?.user_id != user.id) {
+        if (!this.adminCheck(user) && serverRow[0]?.user_id != user.id) {
           retMessage = {
             status: 403,
             message: "User is not authorized to perform action."

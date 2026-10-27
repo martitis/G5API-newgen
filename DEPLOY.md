@@ -82,9 +82,8 @@ handle_path /api/* {
 - Rejected MatchZy events appear as "Malformed MatchZy event" with the field that was wrong.
 
 ## Game server
-- **MatchZy with PR #422** (merged into MatchZy `dev` on 2026-10-18). On CS2 1.41.9.1, released MatchZy builds write
-  no round backup files, so restoring a round fails with "no complete round data". The `-allow_round_backup_files`
-  launch flag may also be needed.
+- **MatchZy 0.9.2 or newer** (released 2026-10-18). On CS2 1.41.9.1, older MatchZy builds write no round backup
+  files, so restoring a round fails with "no complete round data" (fixed by PR #422, part of 0.9.2).
 - The game server must reach `server.apiURL`. MatchZy loads the match config from it and posts events, demos and
   backups back to it. A match keeps the URLs it was loaded with: after changing `apiURL`, use **Send panel address to
   server** in the match menu for running matches.

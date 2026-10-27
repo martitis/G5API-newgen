@@ -641,7 +641,7 @@ router.get("/:match_id", async (req, res, next) => {
       return;
     } else if (
       req.user !== undefined &&
-      (matchRow[0].user_id == req.user!.id || Utils.superAdminCheck(req.user))
+      (matchRow[0].user_id == req.user!.id || Utils.adminCheck(req.user))
     ) {
       sql = "SELECT * FROM `match` where id=?";
     } else {
@@ -707,7 +707,7 @@ router.get("/:match_id/stream", async (req, res, next) => {
       return;
     } else if (
       req.user !== undefined &&
-      (matchRow[0].user_id == req.user!.id || Utils.superAdminCheck(req.user))
+      (matchRow[0].user_id == req.user!.id || Utils.adminCheck(req.user))
     ) {
       sql = "SELECT * FROM `match` where id=?";
     } else {
@@ -880,7 +880,7 @@ router.get("/:match_id/live/stream", async (req, res, next) => {
       return;
     }
     const fullAccess: boolean =
-      req.user !== undefined && (matchRow[0].user_id == req.user.id || Utils.superAdminCheck(req.user));
+      req.user !== undefined && (matchRow[0].user_id == req.user.id || Utils.adminCheck(req.user));
     const matchSql: string = fullAccess
       ? "SELECT * FROM `match` WHERE id = ?"
       : "SELECT id, user_id, server_id, team1_id, team2_id, winner, " +
@@ -1247,7 +1247,7 @@ router.get("/limit/:limiter", async (req, res, next) => {
       return;
     }
     let sql: string;
-    if (req.user !== undefined && Utils.superAdminCheck(req.user)) {
+    if (req.user !== undefined && Utils.adminCheck(req.user)) {
       sql =
         "SELECT * FROM `match` WHERE cancelled = 0 OR cancelled IS NULL ORDER BY end_time DESC LIMIT ?";
     } else {
@@ -1308,7 +1308,7 @@ router.get("/page/:firstvalue&:lastvalue", async (req, res, next) => {
       return;
     }
     let sql: string;
-    if (req.user !== undefined && Utils.superAdminCheck(req.user)) {
+    if (req.user !== undefined && Utils.adminCheck(req.user)) {
       sql =
         "SELECT * FROM `match` WHERE cancelled = 0 OR cancelled IS NULL ORDER BY id DESC LIMIT ?,?";
     } else {
@@ -1371,7 +1371,7 @@ router.get("/:match_id/config", async (req, res, next) => {
     const hasKey: boolean = Utils.safeCompare(apiKey, match.api_key);
     const isOwner: boolean =
       req.user != null &&
-      (req.user.id == match.user_id || Utils.superAdminCheck(req.user));
+      (req.user.id == match.user_id || Utils.adminCheck(req.user));
     if (!hasKey && !isOwner) {
       res.status(401).json({ message: "Unauthorized to access match config." });
       return;
@@ -1544,7 +1544,7 @@ router.put("/", Utils.ensureAuthenticated, audited("match.update", { target: (re
         }
         if (
           returnedServer[0].user_id != req.user!.id &&
-          !Utils.superAdminCheck(req.user!) &&
+          !Utils.adminCheck(req.user!) &&
           returnedServer[0].public_server == 0
         ) {
           res.status(403).json({ message: "User does not own this server." });
@@ -1567,7 +1567,7 @@ router.put("/", Utils.ensureAuthenticated, audited("match.update", { target: (re
         );
         if (
           !season.length ||
-          (season[0].user_id != req.user!.id && !Utils.superAdminCheck(req.user!))
+          (season[0].user_id != req.user!.id && !Utils.adminCheck(req.user!))
         ) {
           res.status(403).json({ message: "User does not own this season." });
           return;
@@ -1856,7 +1856,7 @@ export async function createMatchHandler(req: Request, res: Response, next: Next
         res.status(404).json({ message: "Tournament match not found." });
         return;
       }
-      if (node.tournament_owner !== req.user!.id && !Utils.superAdminCheck(req.user!)) {
+      if (node.tournament_owner !== req.user!.id && !Utils.adminCheck(req.user!)) {
         res.status(403).json({ message: "User is not authorized to perform action." });
         return;
       }
@@ -1894,7 +1894,7 @@ export async function createMatchHandler(req: Request, res: Response, next: Next
         return;
       } else if (
         serverInUse[0].user_id != req.user!.id &&
-        !Utils.superAdminCheck(req.user!) &&
+        !Utils.adminCheck(req.user!) &&
         serverInUse[0].public_server == 0
       ) {
         res.status(403).json({ message: "User does not own this server." });
@@ -1915,7 +1915,7 @@ export async function createMatchHandler(req: Request, res: Response, next: Next
         return;
       } else if (
         season[0].user_id != req.user!.id &&
-        !Utils.superAdminCheck(req.user!)
+        !Utils.adminCheck(req.user!)
       ) {
         res.status(403).json({ message: "User does not own this season." });
         return;

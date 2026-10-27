@@ -33,11 +33,8 @@ connPool.on("connection", (conn) => {
 /** A query bound to one transaction (see Database.transaction). */
 export type TransactionQuery = (sql: string, args?: object) => Promise<RowDataPacket[]>;
 
+// The admin config lists are applied at each Steam login (utility/access.ts configRoleLists), not at startup.
 class Database {
-  constructor() {
-    this.setupAdmins();
-  }
-
   async query(sql: string, args?: object): Promise<RowDataPacket[]> {
     try {
       const result: [RowDataPacket[], FieldPacket[]] = await connPool.query<RowDataPacket[]>(sql, args);
@@ -73,21 +70,6 @@ class Database {
       if (objValues[key] == null || objValues[key] == undefined) delete objValues[key];
     }
     return objValues;
-  }
-
-  async setupAdmins(): Promise<void> {
-    try {
-      const listOfAdmins: Array<string> = config.get<string>("admins.steam_ids").split(',');
-      const listofSuperAdmins: Array<string> = config.get<string>("super_admins.steam_ids").split(',');
-      // Get list of admins from database and compare list and add new admins.
-      // Only accounts whose Steam ID was proven by a Steam login can be promoted.
-      const updateAdmins: string = "UPDATE user SET admin = 1, roles_from_config = 1 WHERE steam_verified = 1 AND steam_id IN (?)";
-      const updateSuperAdmins: string = "UPDATE user SET super_admin = 1, roles_from_config = 1 WHERE steam_verified = 1 AND steam_id IN (?)";
-      await connPool.query(updateAdmins, [listOfAdmins]);
-      await connPool.query(updateSuperAdmins, [listofSuperAdmins]);
-    } catch (err) {
-      logger.error({ err }, "Failed to import users.");
-    }
   }
 }
 const db = new Database();

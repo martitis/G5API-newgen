@@ -448,7 +448,7 @@ router.put("/", Utils.ensureAuthenticated, audited("team.update", { target: (req
       return;
     } else if (
       checkUser[0].user_id != req.user!.id &&
-      !Utils.superAdminCheck(req.user!)
+      !Utils.adminCheck(req.user!)
     ) {
       res
         .status(403)
@@ -579,7 +579,7 @@ router.delete("/", Utils.ensureAuthenticated, audited("team.delete", { target: (
       return;
     } else if (
       checkUser[0].user_id != req.user!.id &&
-      !Utils.superAdminCheck(req.user!)
+      !Utils.adminCheck(req.user!)
     ) {
       res
         .status(403)

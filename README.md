@@ -47,8 +47,8 @@ Config keys that matter most:
 
 ## Game server
 CS2 with [CounterStrikeSharp](https://docs.cssharp.dev/) and [MatchZy](https://shobhit-pathak.github.io/MatchZy/).
-Add the server in the panel with its RCON password. Round backups on CS2 1.41.9.1 need a MatchZy build that includes
-PR #422. See [DEPLOY.md](DEPLOY.md#game-server).
+Add the server in the panel with its RCON password. Round backups on CS2 1.41.9.1 need MatchZy 0.9.2 or
+newer. See [DEPLOY.md](DEPLOY.md#game-server).
 
 ## Commands
 | | |

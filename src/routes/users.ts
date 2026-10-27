@@ -19,6 +19,7 @@ import { RowDataPacket } from "mysql2";
 import { UserObject } from "../types/users/UserObject.js";
 import config from "config";
 import { passwordProblem, usernameProblem } from "../utility/credentials.js";
+import { canHoldRoles } from "../utility/access.js";
 
 /* Swagger shared definitions */
 
@@ -157,7 +158,7 @@ router.get("/:user_id", async (req, res, next) => {
       } else {
         delete user.challonge_api_key;
       }
-      if (!isSelf && !(req.user && Utils.superAdminCheck(req.user))) {
+      if (!isSelf && !(req.user && Utils.adminCheck(req.user))) {
         delete user.username;
       }
       res.json({ user });
@@ -202,10 +203,10 @@ router.post("/", Utils.ensureAuthenticated, audited("user.create", { target: (re
     if (req.user && Utils.adminCheck(req.user)) {
       let steamId: string = req.body[0].steam_id;
       let steamName: string = req.body[0].name;
-      // Only super admins may create privileged accounts.
+      // Admins may create admin accounts; only super admins create super admins.
       let isSuperAdminCaller: boolean = Utils.superAdminCheck(req.user);
-      let isAdmin: number = isSuperAdminCaller ? req.body[0].admin : 0;
-      let isSuperAdmin: number = isSuperAdminCaller ? req.body[0].super_admin : 0;
+      let isAdmin: number = req.body[0].admin ? 1 : 0;
+      let isSuperAdmin: number = isSuperAdminCaller && req.body[0].super_admin ? 1 : 0;
       let smallImage: string = req.body[0].small_image;
       let mediumImage: string = req.body[0].medium_image;
       let largeImage: string = req.body[0].large_image;
@@ -364,9 +365,12 @@ router.put("/", Utils.ensureAuthenticated, audited("user.update", { target: (req
     if (callerIsSuperAdmin) {
       // A super admin locked out by mistake gets the role back from super_admins.steam_ids at the next Steam login.
       const rolesChanged: boolean = req.body[0].admin != null || req.body[0].super_admin != null;
-      // A local account's Steam ID isn't proven: it must not get admin rights (see steam_verified).
-      if (rolesChanged && (Number(isAdmin) > 0 || Number(isSuperAdmin) > 0) && !Number(target.steam_verified)) {
-        res.status(412).json({ message: "Only accounts that signed in with Steam can be admins." });
+      // A local account that claimed a Steam ID it never proved must not get admin rights (the ID may be someone
+      // else's); accounts without a Steam ID can (see access.canHoldRoles).
+      if (rolesChanged && (Number(isAdmin) > 0 || Number(isSuperAdmin) > 0) && !canHoldRoles(target)) {
+        res.status(412).json({
+          message: "This account's Steam ID was never confirmed by a Steam login, so it can't be an admin."
+        });
         return;
       }
       // Super admins manage roles and can force-set passwords, e.g. for locked out users.
@@ -405,13 +409,33 @@ router.put("/", Utils.ensureAuthenticated, audited("user.update", { target: (req
         password: (target.username != null || setUsername != null) && password ? hashSync(password, 10) : null,
         challonge_api_key: challongeApiKey
       };
-    } else if (callerIsAdmin && !target.admin && !target.super_admin) {
-      // Admins can tidy up regular users' profiles, nothing more.
+    } else if (callerIsAdmin) {
+      // Admins manage regular users and other admins: role admin on/off, profile, password reset. Super admin
+      // accounts and the super admin role stay with super admins, so an admin can't promote anyone (or
+      // themselves) past their own rights.
+      if (Number(target.super_admin) > 0) {
+        res.status(403).json({ message: "Only super admins can change a super admin's account." });
+        return;
+      }
+      if (req.body[0].super_admin != null && Number(req.body[0].super_admin) > 0) {
+        res.status(403).json({ message: "Only super admins can grant super admin rights." });
+        return;
+      }
+      const adminChanged: boolean = req.body[0].admin != null && Number(req.body[0].admin) !== Number(target.admin);
+      if (adminChanged && Number(req.body[0].admin) > 0 && !canHoldRoles(target)) {
+        res.status(412).json({
+          message: "This account's Steam ID was never confirmed by a Steam login, so it can't be an admin."
+        });
+        return;
+      }
       updateUser = {
+        admin: adminChanged ? (Number(req.body[0].admin) > 0 ? 1 : 0) : undefined,
+        roles_from_config: adminChanged ? 0 : undefined,
         name: displayName,
         small_image: smallImage,
         medium_image: mediumImage,
-        large_image: largeImage
+        large_image: largeImage,
+        password: password ? hashSync(password, 10) : null
       };
     } else {
       res.status(403).json({ message: "You are not authorized to do this." });

@@ -10,7 +10,7 @@ const router = Router();
 
 /** Everything here is for super admins only. */
 const superAdminOnly = (req: Request, res: Response, next: NextFunction) => {
-  if (!Utils.superAdminCheck(req.user!)) {
+  if (!Utils.adminCheck(req.user!)) {
     res.status(403).json({ message: "Only super admins can do this." });
     return;
   }

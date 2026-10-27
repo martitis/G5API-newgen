@@ -64,7 +64,7 @@ describe("Test the season routes", () => {
       })
       .expect(200);
   });
-  it('Should attempt to delete the second season.', () => {
+  it('Should let an admin delete a season it does not own.', () => {
     let deleteSeasonData = [
       {
         season_id: 2
@@ -76,9 +76,9 @@ describe("Test the season routes", () => {
       .set("Accept", "application/json")
       .send(deleteSeasonData)
       .expect((result) => {
-        expect(result.body.message).toMatch(/not authorized/);
+        expect(result.body.message).toMatch(/successfully/);
       })
-      .expect(403);
+      .expect(200);
   });
   it('Should return 404 with no seasons.', () => {
     let updateSeasonData = [
