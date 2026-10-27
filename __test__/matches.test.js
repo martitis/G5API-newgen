@@ -107,7 +107,7 @@ describe("Test the matches routes", () => {
     let updatedMatchData = [
       {
         match_id: 1,
-        title: "Edited by another admin"
+        start_time: new Date().toISOString().slice(0, 19).replace("T", " ")
       }
     ];
     return request
