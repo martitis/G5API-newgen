@@ -9,7 +9,11 @@ import logger from "../utility/logger.js";
 import {
   BracketNode,
   generateBracket,
+  groupOfKey,
+  groupSeeds,
   PlayedMatch,
+  playoffBracket,
+  playoffSeeds,
   resolveBracket,
   Results,
   Source,
@@ -20,13 +24,16 @@ import {
   TournamentFormat
 } from "./bracket.js";
 
-export const FORMATS: TournamentFormat[] = ["single_elim", "double_elim", "round_robin", "swiss"];
+export const FORMATS: TournamentFormat[] = ["single_elim", "double_elim", "round_robin", "swiss", "groups_playoff"];
 
 export interface TournamentSettings {
   /** Series length of normal matches and of finals (elimination finals, grand final). */
   best_of: number;
   final_best_of: number;
   swiss_rounds?: number;
+  /** Groups + playoff: the number of round robin groups and how many of each go to the playoff. */
+  group_count: number;
+  group_advance: number;
   map_pool: string[];
   players_per_team: number;
   min_players_to_ready: number;
@@ -39,6 +46,8 @@ export interface TournamentSettings {
 export const DEFAULT_SETTINGS: TournamentSettings = {
   best_of: 1,
   final_best_of: 3,
+  group_count: 2,
+  group_advance: 2,
   map_pool: [],
   players_per_team: 5,
   min_players_to_ready: 5,
@@ -62,6 +71,8 @@ export function cleanSettings(input: unknown): TournamentSettings {
     best_of: bestOf(raw.best_of, DEFAULT_SETTINGS.best_of),
     final_best_of: bestOf(raw.final_best_of, DEFAULT_SETTINGS.final_best_of),
     swiss_rounds: raw.swiss_rounds == null ? undefined : int(raw.swiss_rounds, 3, 1, 10),
+    group_count: int(raw.group_count, DEFAULT_SETTINGS.group_count, 1, 16),
+    group_advance: int(raw.group_advance, DEFAULT_SETTINGS.group_advance, 1, 16),
     map_pool: Array.isArray(raw.map_pool)
       ? raw.map_pool.filter((map): map is string => typeof map === "string" && /^[A-Za-z0-9_./-]{1,128}$/.test(map))
       : [],
@@ -121,11 +132,17 @@ async function insertNodes(tournamentId: number, nodes: BracketNode[]): Promise<
 
 /** Generates the bracket (Swiss: round 1) and marks the tournament running. */
 export async function startTournament(tournamentId: number): Promise<void> {
-  const rows: RowDataPacket[] = await db.query("SELECT format, status FROM tournament WHERE id = ?", [tournamentId]);
+  const rows: RowDataPacket[] = await db.query("SELECT format, status, settings FROM tournament WHERE id = ?", [
+    tournamentId
+  ]);
   if (!rows.length) throw new Error("Tournament not found.");
   if (rows[0].status !== "draft") throw new Error("The tournament has already started.");
   const teamIds = await seededTeamIds(tournamentId);
-  const nodes = generateBracket(rows[0].format as TournamentFormat, teamIds);
+  const settings = parseSettings(rows[0].settings);
+  const nodes = generateBracket(rows[0].format as TournamentFormat, teamIds, {
+    groups: settings.group_count,
+    advance: settings.group_advance
+  });
   await insertNodes(tournamentId, nodes);
   await db.query("UPDATE tournament SET status = 'running' WHERE id = ?", [tournamentId]);
   await refreshTournament(tournamentId);
@@ -150,9 +167,24 @@ function playedMatches(rows: RowDataPacket[], matches: Map<number, RowDataPacket
   return played;
 }
 
+/** Groups + playoff: each group's table (teams in group order), from its own matches. */
+function groupTables(
+  seeds: number[],
+  settings: TournamentSettings,
+  rows: RowDataPacket[],
+  matches: Map<number, RowDataPacket>
+): { group: number; standings: Standing[] }[] {
+  return groupSeeds(seeds.length, settings.group_count).map((members, index) => {
+    const own = rows.filter((row) => groupOfKey(row.node_key) === index + 1);
+    const teamIds = members.map((seed) => seeds[seed - 1]);
+    return { group: index + 1, standings: standings(teamIds, playedMatches(own, matches)) };
+  });
+}
+
 /**
  * Recomputes the bracket from the linked matches: fills in teams, applies results and byes, unlinks cancelled
- * matches, pairs the next Swiss round when one is complete, and marks the tournament finished at the end.
+ * matches, pairs the next Swiss round when one is complete, creates the playoff once the groups are played, and
+ * marks the tournament finished at the end.
  */
 export async function refreshTournament(tournamentId: number): Promise<void> {
   const tournamentRows: RowDataPacket[] = await db.query("SELECT * FROM tournament WHERE id = ?", [tournamentId]);
@@ -221,6 +253,13 @@ export async function refreshTournament(tournamentId: number): Promise<void> {
         }
         await db.query("UPDATE tournament SET status = 'finished' WHERE id = ?", [tournamentId]);
       }
+    } else if (tournament.format === "groups_playoff" && !rows.some((row) => row.bracket !== "group")) {
+      // The playoff is seeded from the final group tables, so it only exists once every group match is played.
+      if (rows.every((row) => finished(row.status))) {
+        const tables = groupTables(seeds, settings, rows, matches).map((table) => table.standings);
+        await insertNodes(tournamentId, playoffBracket(playoffSeeds(tables, settings.group_advance)));
+        continue; // resolve the playoff (byes) in the second pass
+      }
     } else if (rows.every((row) => finished(row.status))) {
       await db.query("UPDATE tournament SET status = 'finished' WHERE id = ?", [tournamentId]);
     }
@@ -273,6 +312,7 @@ export async function loadTournament(tournamentId: number): Promise<Record<strin
       id: row.id,
       key: row.node_key,
       bracket: row.bracket,
+      group: groupOfKey(row.node_key),
       round: row.round,
       position: row.position,
       final: truthy(row.is_final),
@@ -294,6 +334,15 @@ export async function loadTournament(tournamentId: number): Promise<Record<strin
     const byes = rows.filter((row) => row.status === "bye").map((row) => row.winner_id as number);
     table = standings(seeds, playedMatches(rows, matches), tournament.format === "swiss", byes);
   }
+  const groups =
+    tournament.format === "groups_playoff"
+      ? groupTables(
+          teams.map((team) => team.id as number),
+          parseSettings(tournament.settings),
+          rows,
+          matches
+        )
+      : null;
   return {
     tournament: {
       id: tournament.id,
@@ -308,6 +357,7 @@ export async function loadTournament(tournamentId: number): Promise<Record<strin
     },
     teams,
     nodes,
-    standings: table
+    standings: table,
+    groups
   };
 }
