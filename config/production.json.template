@@ -8,6 +8,8 @@
     "clientHome": "$CLIENTHOME",
     "useRedis": $USEREDIS,
     "apiURL": "$APIURL",
+    "gameServerURL": "$GAMESERVERURL",
+    "listenHost": "$LISTENHOST",
     "uploadDemos": $UPLOADDEMOS,
     "localLoginEnabled": $LOCALLOGINS,
     "redisUrl": "$REDISURL",

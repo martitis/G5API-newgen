@@ -28,12 +28,19 @@ app.set('port', port);
 
 var server = createServer(app);
 
+// Keep idle connections open longer than the reverse proxy / CDN does: Node's default (5 s) lets the origin close
+// a connection the proxy is about to reuse, which Cloudflare reports as a 520.
+server.keepAliveTimeout = 65000;
+server.headersTimeout = 66000;
 
 /**
- * Listen on provided port, on all network interfaces.
+ * Listen on the provided port: on server.listenHost when set (e.g. "127.0.0.1" when the proxy and the game
+ * servers run on this machine, so the API isn't reachable from the network directly), else on all interfaces.
  */
+const listenHost: string = config.has("server.listenHost") ? String(config.get("server.listenHost") ?? "").trim() : "";
 
-server.listen(port);
+if (listenHost) server.listen(port, listenHost);
+else server.listen(port);
 server.on('error', onError);
 server.on('listening', onListening);
 

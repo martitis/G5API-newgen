@@ -377,7 +377,7 @@ router.post(
         await db.query("UPDATE game_server SET in_use = 1 WHERE id = ?", [matchRow[0].server_id]);
         GlobalEmitter.emit("matchUpdate");
         const loaded: boolean = await serverUpdate.prepareGet5Match(
-          Utils.apiUrl("/matches/" + req.params.match_id + "/config"),
+          Utils.gameServerUrl("/matches/" + req.params.match_id + "/config"),
           matchRow[0].api_key
         );
         if (!loaded && process.env.NODE_ENV !== "test") {
@@ -1266,7 +1266,7 @@ router.post(
         try {
           if (await serverUpdate.isGet5Available()) {
             let rconResponse: string = await serverUpdate.restoreBackupFromURL(
-              Utils.apiUrl(`/backups/${parseInt(req.params.match_id)}/${configString}`),
+              Utils.gameServerUrl(`/backups/${parseInt(req.params.match_id)}/${configString}`),
               matchServerId[0].api_key
             );
             currentMatchInfo = "UPDATE `match` SET server_id = ? WHERE id = ?";
@@ -1642,7 +1642,7 @@ router.post(
       const rows: RowDataPacket[] = await db.query("SELECT api_key FROM `match` WHERE id = ?", [req.params.match_id]);
       const serverUpdate: GameServer = await getGameServer(req.params.match_id);
       const loaded: boolean = await serverUpdate.prepareGet5Match(
-        Utils.apiUrl("/matches/" + req.params.match_id + "/config"),
+        Utils.gameServerUrl("/matches/" + req.params.match_id + "/config"),
         rows[0].api_key
       );
       if (!loaded && process.env.NODE_ENV !== "test") {

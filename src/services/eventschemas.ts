@@ -18,6 +18,10 @@ const team = z
     players: z.array(player.partial().passthrough()).nullish()
   })
   .passthrough();
+/** A kill assist wraps the assisting player: { player, friendly_fire, flash_assist }. */
+const assist = z
+  .object({ player: player.nullish(), friendly_fire: z.boolean().nullish(), flash_assist: z.boolean().nullish() })
+  .passthrough();
 const winner = z.object({ team: z.string(), side: z.union([z.string(), z.number()]).nullish() }).passthrough();
 
 const base = z.object({ event: z.string(), matchid: idLike.optional() }).passthrough();
@@ -38,7 +42,7 @@ const SCHEMAS: Record<string, z.ZodTypeAny> = {
   player_death: inRound.extend({
     player,
     attacker: player.nullish(),
-    assist: player.nullish(),
+    assist: assist.nullish(),
     weapon: z.object({ name: z.string().nullish() }).passthrough().nullish()
   }),
   bomb_planted: inRound.extend({ player, site: z.union([z.string(), z.number()]).nullish() }),

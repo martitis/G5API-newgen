@@ -266,6 +266,44 @@ describe("Test the matches routes", () => {
       expect(result.body.tournament.status).toBe("finished");
       expect(result.body.nodes[0]).toMatchObject({ status: "done", winner_id: 3, score: [0, 1] });
     });
+    it("Should unlink the final's match, reopening the tournament, and link it back.", async () => {
+      const slot = `/tournaments/${tournamentId}/nodes/${finalNode.id}/match`;
+      await request.put(slot).set("Content-Type", "application/json").send([{ match_id: null }]).expect(200);
+      let result = await request.get(`/tournaments/${tournamentId}`).expect(200);
+      expect(result.body.tournament.status).toBe("running");
+      expect(result.body.nodes[0]).toMatchObject({ status: "ready", match_id: null });
+      await request.put(slot).set("Content-Type", "application/json").send([{ match_id: 99999 }]).expect(404);
+      await request.put(slot).set("Content-Type", "application/json").send([{ match_id: finalNode.match_id }]).expect(200);
+      result = await request.get(`/tournaments/${tournamentId}`).expect(200);
+      expect(result.body.tournament.status).toBe("finished");
+      expect(result.body.nodes[0]).toMatchObject({ status: "done", winner_id: 3, match_id: finalNode.match_id });
+      await request.put(slot).set("Content-Type", "application/json").send([{ match_id: null }]).expect(200);
+    });
+    it("Should only edit the teams of a slot without a match.", async () => {
+      const node = `/tournaments/${tournamentId}/nodes/${finalNode.id}`;
+      await request.put(node).set("Content-Type", "application/json").send([{ team1_id: 3, team2_id: 3 }]).expect(412);
+      await request.put(node).set("Content-Type", "application/json").send([{ team1_id: 3, team2_id: 99999 }]).expect(412);
+      await request.put(node).set("Content-Type", "application/json").send([{ team1_id: 3, team2_id: 4 }]).expect(200);
+      let result = await request.get(`/tournaments/${tournamentId}`).expect(200);
+      expect(result.body.nodes[0]).toMatchObject({ team1_id: 3, team2_id: 4, manual: true, status: "ready" });
+      await request.put(node).set("Content-Type", "application/json").send([{ reset: true }]).expect(200);
+      result = await request.get(`/tournaments/${tournamentId}`).expect(200);
+      expect(result.body.nodes[0]).toMatchObject({ team1_id: 4, team2_id: 3, manual: false });
+    });
+    it("Should award a disqualified team's slots to its opponents, and reinstate it.", async () => {
+      const team = `/tournaments/${tournamentId}/teams/3`;
+      await request.put(team).set("Content-Type", "application/json").send([{ disqualified: "yes" }]).expect(412);
+      await request.put(team).set("Content-Type", "application/json").send([{ disqualified: true }]).expect(200);
+      let result = await request.get(`/tournaments/${tournamentId}`).expect(200);
+      expect(result.body.teams.find((entry) => entry.id === 3).disqualified).toBe(true);
+      expect(result.body.nodes[0]).toMatchObject({ status: "done", winner_id: 4 });
+      expect(result.body.tournament.status).toBe("finished");
+      await request.put(team).set("Content-Type", "application/json").send([{ disqualified: false }]).expect(200);
+      result = await request.get(`/tournaments/${tournamentId}`).expect(200);
+      expect(result.body.nodes[0]).toMatchObject({ status: "ready", winner_id: null });
+      await request.put(`/tournaments/${tournamentId}/teams/99999`).set("Content-Type", "application/json")
+        .send([{ disqualified: true }]).expect(404);
+    });
   });
 
   describe("PUG queues", () => {
@@ -361,6 +399,12 @@ describe("Test the matches routes", () => {
       maps = await db.query("SELECT team1_score FROM map_stats WHERE match_id = ? AND map_number = 0", [id]);
       expect(maps[0].team1_score).toBe(7);
       await checkMatch(id, status({ team1: { series_score: 0, current_map_score: 9 } }));
+      maps = await db.query("SELECT team1_score FROM map_stats WHERE match_id = ? AND map_number = 0", [id]);
+      expect(maps[0].team1_score).toBe(9);
+
+      // An older answer (the panel already has a newer round_end) never moves the score back, even twice.
+      await checkMatch(id, status({ team1: { series_score: 0, current_map_score: 8 } }));
+      await checkMatch(id, status({ team1: { series_score: 0, current_map_score: 8 } }));
       maps = await db.query("SELECT team1_score FROM map_stats WHERE match_id = ? AND map_number = 0", [id]);
       expect(maps[0].team1_score).toBe(9);
 

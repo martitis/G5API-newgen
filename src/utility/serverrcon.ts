@@ -170,12 +170,17 @@ class ServerRcon {
     });
   }
 
-  async execute(commandString: string): Promise<string> {
+  /**
+   * @param quiet - Background probes (heartbeat, server sweep) report a server going down once themselves, so
+   *   their failures are only logged at debug level here.
+   */
+  async execute(commandString: string, quiet = false): Promise<string> {
     try {
       await this.rcon.connect();
       return await this.rcon.send(commandString);
     } catch (error) {
-      logger.error({ err: error }, "[RCON] Got error");
+      if (quiet) logger.debug({ err: error, host: this.host, port: this.port }, "[RCON] Probe failed");
+      else logger.error({ err: error }, "[RCON] Got error");
       throw error;
     } finally {
       try {
@@ -190,8 +195,8 @@ class ServerRcon {
    * Runs a command that replies with JSON (get5_status, get5_web_available).
    * @returns The parsed reply, or null if the command is unknown or the reply isn't JSON.
    */
-  private async executeJson(commandString: string): Promise<any> {
-    const response: string = await this.execute(commandString);
+  private async executeJson(commandString: string, quiet = false): Promise<any> {
+    const response: string = await this.execute(commandString, quiet);
     const start = response.indexOf("{");
     if (start < 0) return null;
     try {
@@ -203,13 +208,14 @@ class ServerRcon {
 
   /**
    * MatchZy's get5_status: gamestate, matchid, map_number, team scores...
+   * @param quiet - A background probe: a connection failure isn't logged as an error (see execute).
    * @returns The status, or null if MatchZy isn't answering.
    */
-  async getMatchStatus(): Promise<any> {
+  async getMatchStatus(quiet = false): Promise<any> {
     if (process.env.NODE_ENV === "test") {
       return null;
     }
-    return this.executeJson("get5_status");
+    return this.executeJson("get5_status", quiet);
   }
 
   /**

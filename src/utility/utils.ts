@@ -34,6 +34,13 @@ import { User } from "../types/User.js";
 import { AccessMessage } from "../types/mapstats/AccessMessage.js";
 
 import logger from "./logger.js";
+
+/** base + "/" + path, whatever trailing or leading slashes either has. */
+const joinUrl = (base: string, path: string): string => {
+  const root = base.replace(/\/+$/, "");
+  return path ? root + "/" + path.replace(/^\/+/, "") : root;
+};
+
 class Utils {
   /** Function to get an HLTV rating for a user.
    * @function
@@ -90,9 +97,21 @@ class Utils {
    * @param {string} path - Path to append, e.g. "/v2/demo".
    */
   static apiUrl(path: string = ""): string {
-    let base: string = config.get<string>("server.apiURL").replace(/\/+$/, "");
-    if (!path) return base;
-    return base + "/" + path.replace(/^\/+/, "");
+    return joinUrl(config.get<string>("server.apiURL"), path);
+  }
+
+  /** Builds an absolute URL on the API as the game servers reach it: server.gameServerURL when set (e.g.
+   * "http://127.0.0.1:3301" when they run on the same machine, skipping the proxy and CDN), else server.apiURL.
+   * Only for what MatchZy calls: match config, events, backups, demos. Browser-facing URLs use apiUrl().
+   * @name gameServerUrl
+   * @function
+   * @inner
+   * @memberof module:utils
+   * @param {string} path - Path to append, e.g. "/v2/demo".
+   */
+  static gameServerUrl(path: string = ""): string {
+    const own = config.has("server.gameServerURL") ? String(config.get("server.gameServerURL") ?? "").trim() : "";
+    return own ? joinUrl(own, path) : Utils.apiUrl(path);
   }
 
   /** Inner function - Supports encryption and decryption for the database keys to get server RCON passwords.

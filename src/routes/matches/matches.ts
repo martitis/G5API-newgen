@@ -1705,7 +1705,7 @@ router.put("/", Utils.ensureAuthenticated, audited("match.update", { target: (re
             );
             if (
               await newServer.prepareGet5Match(
-                Utils.apiUrl("/matches/" + matchRow[0].id + "/config"),
+                Utils.gameServerUrl("/matches/" + matchRow[0].id + "/config"),
                 matchRow[0].api_key
               )
             ) {
@@ -2078,7 +2078,7 @@ export async function createMatchHandler(req: Request, res: Response, next: Next
           await db.query(sql, [get5Version, insertMatch.insertId]);
           if (
             !(await newServer.prepareGet5Match(
-              Utils.apiUrl("/matches/" + insertMatch.insertId + "/config"),
+              Utils.gameServerUrl("/matches/" + insertMatch.insertId + "/config"),
               apiKey
             ))
           ) {

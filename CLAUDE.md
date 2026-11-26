@@ -33,8 +33,10 @@ All scripts are cross-platform (cross-env plus `scripts/test-admin.mjs`, no sed/
 ## Config
 - `config/{development,production,test}.json` are created from `*.json.template` and gitignored (they hold secrets).
 - `server.dbKey` must be exactly 16 bytes (the AES key that encrypts RCON passwords and API keys in the DB).
-- `server.apiURL` is the public base URL that the game server calls back on. Always build URLs from it with
-  `Utils.apiUrl("/path")`, which handles trailing slashes.
+- `server.apiURL` is the public base URL (Steam login, browser links): build those with `Utils.apiUrl("/path")`.
+  Everything **MatchZy calls** (match config, `/v2` events, backups, demos, backup restore URLs) uses
+  `Utils.gameServerUrl("/path")`: `server.gameServerURL` when set (e.g. `http://127.0.0.1:3301` with the game servers
+  on the same machine), else `apiURL`. `server.listenHost` optionally binds the API to one interface.
 - `admins.steam_ids` / `super_admins.steam_ids` are read **from the config file at each Steam login** (no restart
   needed; `access.configRoleLists`) and grant their role (`user.roles_from_config = 1`); leaving a list removes the
   role only when it came from the list. Roles a super admin sets in the panel (`PUT /users`, `roles_from_config = 0`)
@@ -69,10 +71,22 @@ All scripts are cross-platform (cross-env plus `scripts/test-admin.mjs`, no sed/
   once every group match is done), `resolveBracket`, standings), `src/services/tournaments.ts` (DB: start, `refreshTournament`,
   `onMatchChanged` called on series_end/forfeit/cancel/restart), `src/routes/tournaments.ts`. Slot matches are
   created through `POST /matches` with `tournament_match_id` (checked: slot ready and free, same teams).
+  Admin edits of a started tournament: `PUT /tournaments/:id/teams/:team_id` (disqualify/reinstate:
+  `tournament_team.disqualified`, passed to `resolveBracket`, which awards unplayed slots to the opponent),
+  `PUT /tournaments/:id/nodes/:node_id` (set a slot's teams by hand; the generated sources are kept in
+  `tournament_match.auto_sources` for reset) and `PUT .../nodes/:node_id/match` (link a hand-made match, or unlink).
+  A result that later slots already depend on (`lockedReason`: a dependent slot has a match, a later Swiss round,
+  a drawn playoff) can't be undone. `refreshTournament` also moves a finished tournament back to running.
 - PUG queues: `src/services/pugs.ts` (join, ready check with timeout sweep, formation, `loadMatch`),
   `src/services/pugformation.ts` (pure: balanced/random/captains ABBA), `src/routes/pugs.ts`. Joining needs a
   Steam-verified account. The match is created with `createMatchAs()` (the POST /matches handler, exported from
   `routes/matches/matches.ts`); PUG teams have `team.is_pug = 1` and are hidden from team lists.
+- Heartbeat: `src/services/heartbeat.ts` polls `get5_status` (probes are reused for up to 15 s) and
+  `serverstate.ts` (pure) decides resyncs. A resync **only moves scores forward** and only while the map is `live`:
+  the probe can be older than a `round_end`/`map_result` that just arrived, and between maps MatchZy reports the
+  next `map_number` with the finished map's score (LAN 2026-11: rolling back scores this way flagged every map
+  incomplete). Offline servers are logged once per change, not per probe.
+- `/v2` events for a finished or cancelled match get 200 "ignored"; only a wrong key gets 401.
 - `src/services/challonge.ts`: Challonge score sync. `src/types/`: TS types.
 
 ## MatchZy integration facts (verified against the MatchZy source)

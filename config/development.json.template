@@ -8,6 +8,8 @@
     "clientHome": "http://localhost:8080",
     "useRedis": true,
     "apiURL": "http://localhost:8080/api/",
+    "gameServerURL": "",
+    "listenHost": "",
     "uploadDemos": false,
     "localLoginEnabled": true,
     "redisUrl": "redis://:super_secure@localhost:6379",

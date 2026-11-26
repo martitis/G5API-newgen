@@ -27,7 +27,9 @@ pm2 save && pm2 startup                                     # restart on reboot
 | `server.dbKey` | **exactly 16 bytes**. It encrypts RCON passwords and API keys in the DB, so keep it: changing it makes them unreadable |
 | `server.steamAPIKey` | from https://steamcommunity.com/dev/apikey |
 | `server.sharedSecret` | long random string (session cookie secret) |
-| `server.apiURL` | public base URL of the API **as the game server sees it**, e.g. `https://panel.example.com/api/` |
+| `server.apiURL` | public base URL of the API, e.g. `https://panel.example.com/api/`. Steam login returns here, and game servers use it unless `gameServerURL` is set |
+| `server.gameServerURL` | optional. Base URL the **game servers** use for the match config, events, backups and demos. When they run on the same machine as the API, set `http://127.0.0.1:<server.port>` (no `/api`: that prefix belongs to the proxy). Their traffic then skips the proxy and the CDN: no Cloudflare 520s or 100 MB upload limit for demos, and the match keys never leave the machine. Empty = `apiURL` |
+| `server.listenHost` | optional. Interface the API listens on. `127.0.0.1` when the reverse proxy and game servers are on the same machine, so port `server.port` isn't reachable from the network. Empty = all interfaces |
 | `server.clientHome` | the panel URL; Steam login returns there |
 | `server.uploadDemos` | `true` to have MatchZy upload demos to `public/demos` |
 | `server.localLoginEnabled` | `false` unless you want username/password accounts |
@@ -84,9 +86,12 @@ handle_path /api/* {
 ## Game server
 - **MatchZy 0.9.2 or newer** (released 2026-10-18). On CS2 1.41.9.1, older MatchZy builds write no round backup
   files, so restoring a round fails with "no complete round data" (fixed by PR #422, part of 0.9.2).
-- The game server must reach `server.apiURL`. MatchZy loads the match config from it and posts events, demos and
-  backups back to it. A match keeps the URLs it was loaded with: after changing `apiURL`, use **Send panel address to
-  server** in the match menu for running matches.
+- The game server must reach `server.gameServerURL` (or `server.apiURL` when that is empty). MatchZy loads the match
+  config from it and posts events, demos and backups back to it. A match keeps the URLs it was loaded with: after
+  changing either, use **Send panel address to server** in the match menu for running matches.
+- Game servers on the same machine as the API: set `gameServerURL` to `http://127.0.0.1:<port>` and `listenHost` to
+  `127.0.0.1`. RCON already stays on the machine when the server's address in the panel is the machine's own IP; keep
+  that address (not 127.0.0.1), because players get it as the connect address.
 - RCON: add the server in the panel with its RCON password. The panel only sends sanitized arguments, and it never
   shows the password except through `GET /servers/:id/rcon` to the owner or a super admin.
 - A **join password** set on the server in the panel is applied as `sv_password` when a match loads, and added to
