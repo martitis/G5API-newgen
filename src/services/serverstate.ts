@@ -80,18 +80,39 @@ export function assessServerState(match: PanelMatch, status: Get5Status | null):
       resync: null
     };
   }
-  return { seen: "ok", reason: null, resync: SCORING_STATES.includes(gamestate) ? resyncFor(match, status) : null };
+  return {
+    seen: "ok",
+    reason: null,
+    resync: SCORING_STATES.includes(gamestate) ? resyncFor(match, status, gamestate) : null
+  };
 }
 
-/** What has to change in the DB so it matches the server; null when nothing does. */
-export function resyncFor(match: PanelMatch, status: Get5Status): Resync | null {
+/**
+ * What has to change in the DB so it matches the server; null when nothing does.
+ *
+ * The server's answer can be older than the panel: the heartbeat reuses a probe up to 15 s old, and a round_end
+ * or map_result arriving in between already moved the panel on. So a resync only ever moves scores forward (more
+ * rounds played, more maps won). A score going back (a round backup restored) comes with its own backup_loaded and
+ * round_end events.
+ * @param gamestate - The map score is only taken while the map is live: between maps MatchZy already reports the
+ *   next map_number with the finished map's score.
+ */
+export function resyncFor(match: PanelMatch, status: Get5Status, gamestate = "live"): Resync | null {
   const mapNumber = num(status.map_number);
   const score1 = num(status.team1?.current_map_score);
   const score2 = num(status.team2?.current_map_score);
   let map: Resync["map"] = null;
-  if (mapNumber !== null && score1 !== null && score2 !== null) {
+  if (gamestate === "live" && mapNumber !== null && score1 !== null && score2 !== null) {
     const known = match.maps.find((entry) => entry.map_number === mapNumber);
-    if (!known || known.team1_score !== score1 || known.team2_score !== score2) {
+    const serverRounds = score1 + score2;
+    // The finished map's score, still shown for the next map_number: not a new map yet.
+    const previousMapScore = match.maps.some(
+      (entry) => entry.map_number < mapNumber && entry.team1_score === score1 && entry.team2_score === score2
+    );
+    const behind = known
+      ? !known.ended && serverRounds > known.team1_score + known.team2_score
+      : !(serverRounds > 0 && previousMapScore);
+    if (behind) {
       map = {
         map_number: mapNumber,
         map_name: status.maps?.[mapNumber] ?? null,
@@ -107,8 +128,13 @@ export function resyncFor(match: PanelMatch, status: Get5Status): Resync | null 
       : match.maps.filter((entry) => entry.map_number < mapNumber && !entry.ended).map((entry) => entry.map_number);
   const series1 = num(status.team1?.series_score);
   const series2 = num(status.team2?.series_score);
+  // Forward only, like the map score: a map_result that just arrived must not be undone by an older answer.
   const series =
-    series1 !== null && series2 !== null && (series1 !== match.team1_series_score || series2 !== match.team2_series_score)
+    series1 !== null &&
+    series2 !== null &&
+    series1 >= match.team1_series_score &&
+    series2 >= match.team2_series_score &&
+    series1 + series2 > match.team1_series_score + match.team2_series_score
       ? { team1: series1, team2: series2 }
       : null;
   return map || close_maps.length || series ? { map, close_maps, series } : null;

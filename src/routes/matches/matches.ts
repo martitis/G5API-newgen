@@ -18,7 +18,6 @@ import GameServer from "../../utility/serverrcon.js";
 
 import GlobalEmitter, { forMatch } from "../../utility/emitter.js";
 
-import config from "config";
 import {
   buildMatchConfig,
   MatchConfigError,
@@ -1419,7 +1418,7 @@ router.get("/:match_id/config", async (req, res, next) => {
           auth: string;
           spectator_name: string | null;
         }>,
-        uploadDemos: Boolean(config.get("server.uploadDemos")),
+        uploadDemos: Utils.demoUploadsEnabled(),
         serverPassword: (matchServer[0]?.join_password as string | null | undefined) || null
       },
       match.api_key
@@ -1705,7 +1704,7 @@ router.put("/", Utils.ensureAuthenticated, audited("match.update", { target: (re
             );
             if (
               await newServer.prepareGet5Match(
-                Utils.apiUrl("/matches/" + matchRow[0].id + "/config"),
+                Utils.gameServerUrl("/matches/" + matchRow[0].id + "/config"),
                 matchRow[0].api_key
               )
             ) {
@@ -2078,7 +2077,7 @@ export async function createMatchHandler(req: Request, res: Response, next: Next
           await db.query(sql, [get5Version, insertMatch.insertId]);
           if (
             !(await newServer.prepareGet5Match(
-              Utils.apiUrl("/matches/" + insertMatch.insertId + "/config"),
+              Utils.gameServerUrl("/matches/" + insertMatch.insertId + "/config"),
               apiKey
             ))
           ) {

@@ -27,9 +27,12 @@ pm2 save && pm2 startup                                     # restart on reboot
 | `server.dbKey` | **exactly 16 bytes**. It encrypts RCON passwords and API keys in the DB, so keep it: changing it makes them unreadable |
 | `server.steamAPIKey` | from https://steamcommunity.com/dev/apikey |
 | `server.sharedSecret` | long random string (session cookie secret) |
-| `server.apiURL` | public base URL of the API **as the game server sees it**, e.g. `https://panel.example.com/api/` |
+| `server.apiURL` | public base URL of the API, e.g. `https://panel.example.com/api/`. Steam login returns here, and game servers use it unless `gameServerURL` is set |
+| `server.gameServerURL` | optional. Base URL the **game servers** use for the match config, events, backups and demos. When they run on the same machine as the API, set `http://127.0.0.1:<server.port>` (no `/api`: that prefix belongs to the proxy). Their traffic then skips the proxy and the CDN: no Cloudflare 520s or 100 MB upload limit for demos, and the match keys never leave the machine. Empty = `apiURL` |
+| `server.listenHost` | optional. Interface the API listens on. `127.0.0.1` when the reverse proxy and game servers are on the same machine, so port `server.port` isn't reachable from the network. Empty = all interfaces |
 | `server.clientHome` | the panel URL; Steam login returns there |
-| `server.uploadDemos` | `true` to have MatchZy upload demos to `public/demos` |
+| `server.uploadDemos` | `true` to have MatchZy upload demos to `public/demos` (a zipped copy per map) |
+| `server.localDemoDir` | optional. Game servers on the same machine: an absolute path where the API can **read** MatchZy's demo folder, e.g. `/srv/cs2demos` (see [Demos without upload](#demos-without-upload)). Demos are then linked and served from there, with no upload and no copy; `uploadDemos` is ignored. Empty = off |
 | `server.localLoginEnabled` | `false` unless you want username/password accounts |
 | `production.*` | MySQL connection; `connectionLimit` 15 is plenty |
 | `admins.steam_ids`, `super_admins.steam_ids` | comma-separated SteamID64s. They overwrite the role flags on every Steam login |
@@ -84,13 +87,43 @@ handle_path /api/* {
 ## Game server
 - **MatchZy 0.9.2 or newer** (released 2026-10-18). On CS2 1.41.9.1, older MatchZy builds write no round backup
   files, so restoring a round fails with "no complete round data" (fixed by PR #422, part of 0.9.2).
-- The game server must reach `server.apiURL`. MatchZy loads the match config from it and posts events, demos and
-  backups back to it. A match keeps the URLs it was loaded with: after changing `apiURL`, use **Send panel address to
-  server** in the match menu for running matches.
+- The game server must reach `server.gameServerURL` (or `server.apiURL` when that is empty). MatchZy loads the match
+  config from it and posts events, demos and backups back to it. A match keeps the URLs it was loaded with: after
+  changing either, use **Send panel address to server** in the match menu for running matches.
+- Game servers on the same machine as the API: set `gameServerURL` to `http://127.0.0.1:<port>` and `listenHost` to
+  `127.0.0.1`. RCON already stays on the machine when the server's address in the panel is the machine's own IP; keep
+  that address (not 127.0.0.1), because players get it as the connect address.
 - RCON: add the server in the panel with its RCON password. The panel only sends sanitized arguments, and it never
   shows the password except through `GET /servers/:id/rcon` to the owner or a super admin.
 - A **join password** set on the server in the panel is applied as `sv_password` when a match loads, and added to
   connect links. It stays set on the server after the match.
+
+## Demos without upload
+
+When the game servers run on the same machine as the API, the API can serve MatchZy's demos from where they're
+recorded: no upload, no second copy, and no Cloudflare upload limit.
+
+1. Give the API **read-only** access to the demo folder only, with a read-only bind mount (as root). The game
+   servers' home is usually not readable by the API user, and this way nothing else in it is exposed:
+
+   ```sh
+   sudo mkdir -p /srv/cs2demos
+   echo '/home/cs2server/serverfiles/game/csgo/MatchZy /srv/cs2demos none bind,ro 0 0' | sudo tee -a /etc/fstab
+   sudo systemctl daemon-reload && sudo mount /srv/cs2demos
+   sudo -u webpanel ls /srv/cs2demos | head -3     # the API user can list it
+   sudo -u webpanel touch /srv/cs2demos/x         # must fail: read-only
+   ```
+
+   The demo files must be world-readable (`-rw-rw-r--`, the default for the CS2 user with umask 002), and the source
+   folder is MatchZy's `matchzy_demo_path` (default `MatchZy/` under `csgo/`).
+2. Set `server.localDemoDir` to `/srv/cs2demos` and restart the API.
+3. Every 2 minutes the API links finished maps to their demo. It matches `<match id>_<map name>` in MatchZy's file
+   name (`{TIME}_{MATCH_ID}_{MAP}_{TEAM1}_vs_{TEAM2}`, the default `matchzy_demo_name_format`), and links a file once
+   it hasn't changed for a minute. Older matches are linked too.
+4. Downloads are served at `/demo/<file>`, after `public/demos` (uploaded demos keep working). Only plain `.dem` names
+   in that folder are served.
+5. A demo removed from the folder (e.g. `cs2manager.sh archive`) shows as "Demo archived" on the match page. If the
+   folder is empty while demos are linked, nothing is marked: that's taken as a missing mount.
 
 ## Docker (optional)
 `docker-compose.yml` builds this repo (`build: .`) and uses the panel image from your GHCR (`ghcr.io/martitis/g5v-newgen`).

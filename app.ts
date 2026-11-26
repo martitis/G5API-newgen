@@ -5,6 +5,7 @@ import RedisStore from "connect-redis";
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
+import path from "path";
 import bearerToken from "express-bearer-token";
 import rateLimit from "express-rate-limit";
 import session from "express-session";
@@ -32,6 +33,7 @@ import scheduledRouter from "./src/routes/scheduled.js";
 import { startScheduleSweep } from "./src/services/scheduler.js";
 import { startPugSweep } from "./src/services/pugs.js";
 import { startHeartbeatSweep, startServerSweep } from "./src/services/heartbeat.js";
+import { localDemoPath, startLocalDemoSweep } from "./src/services/localdemos.js";
 import matchesRouter from "./src/routes/matches/matches.js";
 import matchServerRouter from "./src/routes/matches/matchserver.js";
 import playerstatsRouter from "./src/routes/playerstats/playerstats.js";
@@ -97,6 +99,21 @@ app.use(express.json({ limit: "512kb" }));
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 app.use("/demo", express.static("public/demos"));
+// Demos read in place from the game servers' folder (server.localDemoDir), after the uploaded ones.
+app.get("/demo/:file", async (req, res, next) => {
+  try {
+    const file = await localDemoPath(req.params.file);
+    if (!file) {
+      res.status(404).json({ message: "Demo not found. It may have been archived." });
+      return;
+    }
+    res.download(file, path.basename(file), { dotfiles: "deny" }, (err) => {
+      if (err && !res.headersSent) next(err);
+    });
+  } catch (err) {
+    next(err);
+  }
+});
 // Round backups are fetched by the game server (matchzy_loadbackup_url) with the match API key.
 app.use("/backups/:match_id", async (req, res, next) => {
   try {
@@ -245,6 +262,8 @@ if (process.env.NODE_ENV !== "test") {
   startHeartbeatSweep();
   // Probes every game server every 10 s (last seen on the servers page; the match checks reuse the answer).
   startServerSweep();
+  // Links finished maps to their demo in the game servers' folder (server.localDemoDir; off when unset).
+  startLocalDemoSweep();
 }
 app.use("/v2", v2Router);
 app.use("/v2/demo", v2DemoRouter);

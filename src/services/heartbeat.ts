@@ -43,7 +43,7 @@ async function probeServer(serverId: number): Promise<Probe> {
   const timeout = new Promise<Probe>((resolve) => {
     timer = setTimeout(() => resolve({ reachable: false, status: null, at: Date.now() }), STATUS_TIMEOUT_MS);
   });
-  const ask = server.getMatchStatus().then(
+  const ask = server.getMatchStatus(true).then(
     (status: Get5Status | null): Probe => ({ reachable: true, status, at: Date.now() }),
     (): Probe => ({ reachable: false, status: null, at: Date.now() })
   );
@@ -164,16 +164,19 @@ export async function checkMatch(
     assessment.seen
   );
 
-  // Only resync a score the server reported on the previous check too: a check that lands between a round end
-  // and its webhook event would otherwise "fix" a score that is about to arrive.
+  // Only resync what the server reported on the previous check too: a check that lands between a round end (or
+  // a map end) and its webhook event would otherwise "fix" something that is about to arrive.
   let resync = assessment.resync;
-  if (resync?.map && !resync.map.insert) {
-    const stable =
-      previous != null &&
-      Number(previous.map_number) === resync.map.map_number &&
-      Number(previous.team1_score) === resync.map.team1_score &&
-      Number(previous.team2_score) === resync.map.team2_score;
-    if (!stable) resync = resync.close_maps.length || resync.series ? { ...resync, map: null } : null;
+  if (resync) {
+    const sameMap = previous != null && status?.map_number != null && Number(previous.map_number) === Number(status.map_number);
+    let { map, close_maps } = resync;
+    if (map && !map.insert) {
+      const stable =
+        sameMap && Number(previous?.team1_score) === map.team1_score && Number(previous?.team2_score) === map.team2_score;
+      if (!stable) map = null;
+    }
+    if (!sameMap) close_maps = [];
+    resync = map || close_maps.length || resync.series ? { ...resync, map, close_maps } : null;
   }
   if (resync) {
     await applyResync(match, resync);
@@ -245,9 +248,22 @@ export async function checkAllMatches(): Promise<void> {
   }
 }
 
+/** Whether each server answered the last sweep, to log only when that changes (not every 10 s while it's off). */
+const reachableBefore = new Map<number, boolean>();
+
+/** Logs a server going down (also once at startup) or coming back. */
+function logReachability(serverId: number, reachable: boolean): void {
+  const before = reachableBefore.get(serverId);
+  reachableBefore.set(serverId, reachable);
+  if (before === reachable || (before === undefined && reachable)) return;
+  if (reachable) logger.info({ server_id: serverId }, "Game server answers RCON again");
+  else logger.warn({ server_id: serverId }, "Game server does not answer RCON (logged once until it answers again)");
+}
+
 /** Probes one game server and stores when it last answered (game_server.last_seen / last_checked). */
 export async function checkServer(serverId: number): Promise<Probe> {
   const probe = await probeServer(serverId);
+  logReachability(serverId, probe.reachable);
   const now = sqlNow();
   if (probe.reachable) {
     await db.query("UPDATE game_server SET last_seen = ?, last_checked = ?, last_gamestate = ? WHERE id = ?", [

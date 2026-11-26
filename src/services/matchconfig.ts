@@ -177,15 +177,15 @@ export function buildMatchConfig(input: MatchConfigInput, apiKey: string): Match
  */
 export function callbackCvars(apiKey: string, uploadDemos: boolean): Record<string, string> {
   const cvars: Record<string, string> = {
-    matchzy_remote_log_url: Utils.apiUrl("/v2"),
+    matchzy_remote_log_url: Utils.gameServerUrl("/v2"),
     matchzy_remote_log_header_key: "Authorization",
     matchzy_remote_log_header_value: apiKey,
-    matchzy_remote_backup_url: Utils.apiUrl("/v2/backup"),
+    matchzy_remote_backup_url: Utils.gameServerUrl("/v2/backup"),
     matchzy_remote_backup_header_key: "Authorization",
     matchzy_remote_backup_header_value: apiKey
   };
   if (uploadDemos) {
-    cvars.matchzy_demo_upload_url = Utils.apiUrl("/v2/demo");
+    cvars.matchzy_demo_upload_url = Utils.gameServerUrl("/v2/demo");
     cvars.matchzy_demo_upload_header_key = "Authorization";
     cvars.matchzy_demo_upload_header_value = apiKey;
   }

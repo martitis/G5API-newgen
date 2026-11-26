@@ -3,11 +3,14 @@ import { agent } from "supertest";
 import app from "../app.js";
 import { backupLoadCommand, parseBackupList, parseStatusPlayers, restoreFailed, safeRconArg, RconArgumentError } from "../src/utility/serverrcon.js";
 import Utils from "../src/utility/utils.js";
+import config from "config";
+import { jest } from "@jest/globals";
 import { buildMatchConfig, callbackCvars, parseMapPool, MatchConfigError } from "../src/services/matchconfig.js";
 import { buildSummary } from "../src/services/matchsummary.js";
 import { normalizeSide } from "../src/services/mapflowservices.js";
 import { cleanSettings } from "../src/services/tournaments.js";
 import { eventProblem } from "../src/services/eventschemas.js";
+import { demoFileFor, isDemoName, SETTLE_MS } from "../src/services/localdemos.js";
 import { forMatch } from "../src/utility/emitter.js";
 import { assessServerState, nextState } from "../src/services/serverstate.js";
 import { passwordProblem, usernameProblem } from "../src/utility/credentials.js";
@@ -16,6 +19,7 @@ import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import {
+  dependentKeys,
   doubleElimination,
   generateBracket,
   groupOfKey,
@@ -468,6 +472,32 @@ describe("callbackCvars", () => {
     expect(cvars.matchzy_remote_log_header_value).toBe("KEY123");
     expect(callbackCvars("KEY123", false).matchzy_demo_upload_url).toBeUndefined();
   });
+
+  it("uses server.apiURL for game servers when server.gameServerURL is empty", () => {
+    expect(Utils.gameServerUrl("/v2")).toBe(Utils.apiUrl("/v2"));
+    expect(callbackCvars("KEY123", true).matchzy_remote_log_url).toBe(Utils.apiUrl("/v2"));
+  });
+
+  it("sends game servers to server.gameServerURL when set, and keeps browser URLs public", () => {
+    const realGet = config.get.bind(config);
+    const realHas = config.has.bind(config);
+    const get = jest.spyOn(config, "get").mockImplementation((key) =>
+      key === "server.gameServerURL" ? "http://127.0.0.1:3301/" : realGet(key)
+    );
+    const has = jest.spyOn(config, "has").mockImplementation((key) => key === "server.gameServerURL" || realHas(key));
+    try {
+      const cvars = callbackCvars("KEY123", true);
+      expect(cvars.matchzy_remote_log_url).toBe("http://127.0.0.1:3301/v2");
+      expect(cvars.matchzy_remote_backup_url).toBe("http://127.0.0.1:3301/v2/backup");
+      expect(cvars.matchzy_demo_upload_url).toBe("http://127.0.0.1:3301/v2/demo");
+      expect(Utils.gameServerUrl("matches/5/config")).toBe("http://127.0.0.1:3301/matches/5/config");
+      // Steam login and other browser-facing links stay on the public address.
+      expect(Utils.apiUrl("/auth/steam/return")).not.toContain("127.0.0.1");
+    } finally {
+      get.mockRestore();
+      has.mockRestore();
+    }
+  });
 });
 
 describe("normalizeSide (MatchZy side values)", () => {
@@ -735,6 +765,121 @@ describe("groups + playoff", () => {
   });
 });
 
+describe("local demos", () => {
+  const old = Date.now() - 10 * 60 * 1000;
+  const files = [
+    { name: "2026-11-21_23-46-20_220_de_anubis_NaJkintuvai_vs_Kaunas.dem", size: 13404522, mtimeMs: old },
+    { name: "2026-11-21_20-08-12_1220_de_anubis_Kaunas_vs_ReBots.dem", size: 258791097, mtimeMs: old },
+    { name: "2026-11-22_01-14-42_224_de_mirage_dzempub_vs_NaJkintuvai.dem", size: 229317843, mtimeMs: old },
+    { name: "2026-11-22_02-03-43_224_de_ancient_dzempub_vs_NaJkintuvai.dem", size: 147373989, mtimeMs: old },
+    { name: "2026-11-20_20-03-53_165_de_nuke_ℜ_vs_LAKY.dem", size: 300000000, mtimeMs: old }
+  ];
+  it("finds a map's demo by match id and map name, whole parts only", () => {
+    expect(demoFileFor(files, 220, "de_anubis")).toBe("2026-11-21_23-46-20_220_de_anubis_NaJkintuvai_vs_Kaunas.dem");
+    expect(demoFileFor(files, 224, "de_ancient")).toMatch(/_224_de_ancient_/);
+    expect(demoFileFor(files, 22, "de_anubis")).toBeNull(); // 220 and 1220 are other matches
+    expect(demoFileFor(files, 165, "de_nuke")).toMatch(/ℜ_vs_LAKY\.dem$/);
+    expect(demoFileFor(files, 224, "")).toBeNull();
+  });
+  it("waits until the demo is written, and takes the full one after a map restart", () => {
+    const now = Date.now();
+    const writing = [{ name: "x_7_de_nuke_a_vs_b.dem", size: 5, mtimeMs: now - 1000 }];
+    expect(demoFileFor(writing, 7, "de_nuke", now)).toBeNull();
+    expect(demoFileFor(writing, 7, "de_nuke", now + SETTLE_MS)).toBe("x_7_de_nuke_a_vs_b.dem");
+    const restarted = [
+      { name: "t1_7_de_nuke_a_vs_b.dem", size: 1000, mtimeMs: old },
+      { name: "t2_7_de_nuke_a_vs_b.dem", size: 900000, mtimeMs: old }
+    ];
+    expect(demoFileFor(restarted, 7, "de_nuke")).toBe("t2_7_de_nuke_a_vs_b.dem");
+  });
+  it("only takes plain .dem names", () => {
+    expect(isDemoName("2026-11-20_20-03-53_165_de_nuke_ℜ_vs_LAKY.dem")).toBe(true);
+    for (const bad of ["../secrets.dem", "a/b.dem", "a\\b.dem", ".hidden.dem", "demo.zip", "x.dem\0"]) {
+      expect(isDemoName(bad)).toBe(false);
+    }
+  });
+  it("serves a demo from the folder read-only, and nothing outside it", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "demos-"));
+    writeFileSync(join(dir, "t_9_de_nuke_ℜ_vs_b.dem"), "DEMO");
+    writeFileSync(join(tmpdir(), "outside-secret.dem"), "SECRET");
+    const realGet = config.get.bind(config);
+    const realHas = config.has.bind(config);
+    jest.spyOn(config, "get").mockImplementation((key) => (key === "server.localDemoDir" ? dir : realGet(key)));
+    jest.spyOn(config, "has").mockImplementation((key) => key === "server.localDemoDir" || realHas(key));
+    try {
+      const ok = await request.get("/demo/" + encodeURIComponent("t_9_de_nuke_ℜ_vs_b.dem")).expect(200);
+      expect(ok.headers["content-disposition"]).toMatch(/attachment/);
+      for (const bad of ["..%2Foutside-secret.dem", "%2E%2E%2Foutside-secret.dem", "missing.dem", "x.txt"]) {
+        await request.get("/demo/" + bad).expect(404);
+      }
+    } finally {
+      jest.restoreAllMocks();
+    }
+  });
+  it("doesn't ask MatchZy to upload when demos are read in place", () => {
+    expect(Utils.demoUploadsEnabled()).toBe(false); // test config: uploadDemos false
+    const realGet = config.get.bind(config);
+    const realHas = config.has.bind(config);
+    const mock = (local) => {
+      jest.spyOn(config, "get").mockImplementation((key) =>
+        key === "server.uploadDemos" ? true : key === "server.localDemoDir" ? local : realGet(key)
+      );
+      jest.spyOn(config, "has").mockImplementation((key) => key === "server.localDemoDir" || realHas(key));
+    };
+    try {
+      mock("");
+      expect(Utils.demoUploadsEnabled()).toBe(true);
+      jest.restoreAllMocks();
+      mock("/srv/cs2demos");
+      expect(Utils.demoUploadsEnabled()).toBe(false);
+    } finally {
+      jest.restoreAllMocks();
+    }
+  });
+});
+
+describe("disqualified teams", () => {
+  const teams = (n) => Array.from({ length: n }, (_, i) => 100 + i);
+
+  it("loses every unplayed elimination slot, and played results stand", () => {
+    const seeds = teams(4);
+    const nodes = singleElimination(4);
+    // Round 1: seed 1 v 4 and 2 v 3. Seed 1 (100) wins its match, then is disqualified.
+    const results = { "upper-1-0": { winner_id: 100 } };
+    const resolved = resolveBracket(nodes, seeds, results, new Set([100]));
+    expect(resolved.find((n) => n.key === "upper-1-0")).toMatchObject({ status: "done", winner_id: 100 });
+    expect(resolved.find((n) => n.key === "upper-1-1").status).toBe("ready");
+    const withSemi = resolveBracket(nodes, seeds, { ...results, "upper-1-1": { winner_id: 101 } }, new Set([100]));
+    // The final is awarded to the other finalist without a match.
+    expect(withSemi.find((n) => n.final)).toMatchObject({ status: "done", winner_id: 101, loser_id: 100 });
+  });
+
+  it("drops a disqualified team through the lower bracket without a match", () => {
+    const seeds = teams(4);
+    const resolved = resolveBracket(doubleElimination(4), seeds, {}, new Set([103]));
+    // 103 (seed 4) loses upper round 1 to seed 1, then its lower bracket match too.
+    expect(resolved.find((n) => n.key === "upper-1-0")).toMatchObject({ status: "done", winner_id: 100 });
+    const lower = resolved.find((n) => n.key === "lower-1-0");
+    expect(lower.status).toBe("pending"); // waits for the other upper round 1 loser
+  });
+
+  it("leaves a slot between two disqualified teams empty, so the next one is a bye", () => {
+    const seeds = teams(4);
+    const resolved = resolveBracket(singleElimination(4), seeds, { "upper-1-1": { winner_id: 101 } }, new Set([100, 103]));
+    expect(resolved.find((n) => n.key === "upper-1-0").status).toBe("empty");
+    expect(resolved.find((n) => n.final)).toMatchObject({ status: "bye", winner_id: 101 });
+  });
+
+  it("finds every slot that depends on a result", () => {
+    const nodes = doubleElimination(4);
+    const keys = dependentKeys(nodes, "upper-1-0");
+    expect(keys.has("upper-2-0")).toBe(true);
+    expect(keys.has("lower-1-0")).toBe(true);
+    expect(keys.has("grand_final-1-0")).toBe(true);
+    expect(keys.has("upper-1-1")).toBe(false);
+  });
+});
+
 describe("tournament settings", () => {
   it("keeps a Challonge tournament id and drops anything that isn't one", () => {
     expect(cleanSettings({ challonge_url: " sub-abc_123 " }).challonge_url).toBe("sub-abc_123");
@@ -768,6 +913,26 @@ describe("MatchZy event schemas", () => {
         headshot: false
       })
     ).toBeNull();
+    // A kill with an assist: MatchZy nests the assisting player (a real event that used to be refused).
+    expect(
+      eventProblem({
+        event: "player_death", matchid: 224, map_number: 1, round_number: 3, round_time: 57063,
+        weapon: { name: "ak47", id: 27 }, headshot: false,
+        attacker: { steamid: "76561199019144684", name: "qen", user_id: 8, side: "t", is_bot: false },
+        assist: {
+          player: { steamid: "76561198126717807", name: "-DEST1NYY-", user_id: 5, side: "t", is_bot: false },
+          friendly_fire: false,
+          flash_assist: false
+        },
+        player: { steamid: "76561198315324300", name: "MAGILA", user_id: 4, side: "ct", is_bot: false }
+      })
+    ).toBeNull();
+    expect(
+      eventProblem({
+        event: "player_death", matchid: 12, map_number: 0, round_number: 1, player: { steamid: "1" },
+        assist: { player: { name: "no id" }, friendly_fire: false, flash_assist: false }
+      })
+    ).toMatch(/^player_death: assist\.player\.steamid/);
     expect(eventProblem({ event: "series_start", matchid: 12, num_maps: 3 })).toBeNull();
   });
   it("names the field that is wrong", () => {
@@ -831,6 +996,34 @@ describe("server heartbeat assessment", () => {
       close_maps: [0],
       series: { team1: 1, team2: 0 }
     });
+  });
+  it("never moves a score back when the server's answer is older than the panel (LAN match 188)", () => {
+    // round 7 was just delivered by round_end (panel 5:2) while the probe still showed 4:2
+    const panelAhead = panel({ maps: [{ map_number: 0, team1_score: 5, team2_score: 2, ended: false }] });
+    const stale = live({ team1: { series_score: 0, current_map_score: 4 }, team2: { series_score: 0, current_map_score: 2 } });
+    expect(assessServerState(panelAhead, stale).resync).toBeNull();
+    // the panel really is behind: resync forward
+    const behind = assessServerState(panel(), live({ team1: { series_score: 0, current_map_score: 7 } })).resync;
+    expect(behind.map).toMatchObject({ map_number: 0, team1_score: 7, team2_score: 3, insert: false });
+  });
+  it("leaves a finished map's score alone", () => {
+    const ended = panel({ maps: [{ map_number: 0, team1_score: 12, team2_score: 13, ended: true }] });
+    expect(assessServerState(ended, live({ team1: { series_score: 0, current_map_score: 13 } })).resync).toBeNull();
+  });
+  it("doesn't insert the next map with the finished map's score while the server changes maps", () => {
+    // MatchZy already reports map_number 1 but still map 0's final 13:7
+    const done = panel({
+      team1_series_score: 1,
+      maps: [{ map_number: 0, team1_score: 13, team2_score: 7, ended: true }]
+    });
+    const between = live({ map_number: 1, team1: { series_score: 1, current_map_score: 13 }, team2: { series_score: 0, current_map_score: 7 } });
+    expect(assessServerState(done, between).resync).toBeNull();
+    expect(assessServerState(done, { ...between, gamestate: "post_game" }).resync).toBeNull();
+  });
+  it("never undoes a series score a map_result just set (LAN match 156)", () => {
+    const afterMap = panel({ team1_series_score: 1, maps: [{ map_number: 0, team1_score: 13, team2_score: 11, ended: true }] });
+    const stale = live({ team1: { series_score: 0, current_map_score: 13 }, team2: { series_score: 0, current_map_score: 11 } });
+    expect(assessServerState(afterMap, stale).resync).toBeNull();
   });
   it("doesn't compare scores before the map is live", () => {
     expect(assessServerState(panel(), live({ gamestate: "warmup", team1: { current_map_score: 0 } })).resync).toBeNull();

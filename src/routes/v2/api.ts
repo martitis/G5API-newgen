@@ -100,6 +100,11 @@ router.post("/", basicRateLimit, async (req, res) => {
     }
 
     const matchApiCheck: number = await Utils.checkApiKey(apiKey, matchId);
+    if (matchApiCheck == 1) {
+      logger.warn({ match_id: matchId, event: eventType.event }, "Refused a MatchZy event: invalid API key");
+      return res.status(401).send({ message: "Invalid API key has been given." });
+    }
+    // Demo uploads end after the match did, so this one is taken for finished matches too.
     if (eventType.event == "demo_upload_ended") {
       // The demo itself arrives on /v2/demo; only failures are worth noting here.
       const demoEvent = req.body as { success?: boolean; filename?: string; map_number?: number };
@@ -115,33 +120,12 @@ router.post("/", basicRateLimit, async (req, res) => {
         GlobalEmitter.emit("mapStatUpdate");
       }
       return res.status(200).send({message: "Success"});
-    } else if (eventType.event == "series_end") {
-      // let forfeit: number = event.
-      // Match is finalized, this is usually called after a cancel so we just ignore the value with a 200 response.
-      if (matchApiCheck == 2) {
-        return res.status(200).send({
-          message:
-            "Match already finalized or and invalid API key has been given."
-        });
-      } else if (matchApiCheck == 1) {
-        logger.error(
-          "Match already finalized or and invalid API key has been given."
-        );
-        return res.status(401).send({
-          message:
-            "Match already finalized or and invalid API key has been given."
-        });
-      }
-    } else {
-      if (matchApiCheck == 2 || matchApiCheck == 1) {
-        logger.error(
-          "Match already finalized or and invalid API key has been given."
-        );
-        return res.status(401).send({
-          message:
-            "Match already finalized or and invalid API key has been given."
-        });
-      }
+    }
+    // A finished or cancelled match: MatchZy still sends what happens afterwards (players leaving, the map_result of
+    // a match ended from the panel). Nothing to record, and refusing it would only fill both logs with errors.
+    if (matchApiCheck == 2) {
+      logger.debug({ match_id: matchId, event: eventType.event }, "Ignored a MatchZy event for a finished match");
+      return res.status(200).send({ message: "Match already finalized; event ignored." });
     }
 
     // A malformed event would fail halfway through a handler; refuse it whole instead.
