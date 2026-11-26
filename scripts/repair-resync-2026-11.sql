@@ -28,13 +28,15 @@ JOIN (
 -- ===== Part 1: preview (changes nothing) =====
 
 -- Finished maps whose stored score differs from their last recorded round (rolled back after the last round_end).
+-- Cancelled matches are left as they are (their maps keep the score the cancellation left).
 SELECT ms.match_id, ms.map_number, ms.map_name,
        CONCAT(ms.team1_score, ':', ms.team2_score) AS stored,
        CONCAT(rr.team1_score, ':', rr.team2_score) AS last_round
 FROM map_stats ms
 JOIN repair_rounds rr ON rr.map_id = ms.id
+JOIN `match` m ON m.id = ms.match_id
 WHERE ms.match_id BETWEEN @first_match AND @last_match
-  AND ms.end_time IS NOT NULL
+  AND ms.end_time IS NOT NULL AND NOT COALESCE(m.cancelled, 0)
   AND (ms.team1_score <> rr.team1_score OR ms.team2_score <> rr.team2_score);
 
 -- Maps flagged incomplete although every round is recorded.
@@ -53,7 +55,7 @@ FROM `match` m
 JOIN map_stats ms ON ms.match_id = m.id AND ms.end_time IS NOT NULL
 WHERE m.id BETWEEN @first_match AND @last_match
   AND m.end_time IS NOT NULL AND NOT COALESCE(m.cancelled, 0) AND NOT COALESCE(m.forfeit, 0)
-GROUP BY m.id
+GROUP BY m.id, m.team1_score, m.team2_score
 HAVING SUM(ms.winner = m.team1_id) <> m.team1_score OR SUM(ms.winner = m.team2_id) <> m.team2_score;
 
 -- ===== Part 2: repair =====
@@ -62,9 +64,10 @@ START TRANSACTION;
 -- Final map scores (and the map winner, which map_result set from the real result) from the last recorded round.
 UPDATE map_stats ms
 JOIN repair_rounds rr ON rr.map_id = ms.id
+JOIN `match` m ON m.id = ms.match_id
 SET ms.team1_score = rr.team1_score, ms.team2_score = rr.team2_score, ms.round_number = rr.last_round
 WHERE ms.match_id BETWEEN @first_match AND @last_match
-  AND ms.end_time IS NOT NULL
+  AND ms.end_time IS NOT NULL AND NOT COALESCE(m.cancelled, 0)
   AND (ms.team1_score <> rr.team1_score OR ms.team2_score <> rr.team2_score);
 
 -- Not incomplete when every round from 1 to the last one has its round_end recorded.
@@ -94,5 +97,9 @@ WHERE m.end_time IS NOT NULL AND NOT COALESCE(m.cancelled, 0) AND NOT COALESCE(m
 COMMIT;
 DROP TEMPORARY TABLE IF EXISTS repair_rounds;
 
+-- Applied to production on 2026-11-26 (matches 156-225): 7 final scores fixed, 59 stats_incomplete flags
+-- cleared, no series score changed. Not fixed: two map rows the bug inserted in cancelled matches (156 map 1,
+-- 189 map 2: a copied score, no rounds); one of them has a kill event attached, so they were kept.
+--
 -- Afterwards: POST /tournaments/:id/refresh for any tournament whose matches changed winner (none expected: the
 -- winner comes from map_result/series_end, which this doesn't touch).
