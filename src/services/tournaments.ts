@@ -8,6 +8,7 @@ import GlobalEmitter from "../utility/emitter.js";
 import logger from "../utility/logger.js";
 import {
   BracketNode,
+  dependentKeys,
   generateBracket,
   groupOfKey,
   groupSeeds,
@@ -121,6 +122,21 @@ async function seededTeamIds(tournamentId: number): Promise<number[]> {
   return rows.map((row) => row.team_id);
 }
 
+/** Teams disqualified from the tournament. */
+async function disqualifiedTeams(tournamentId: number): Promise<Set<number>> {
+  const rows: RowDataPacket[] = await db.query(
+    "SELECT team_id FROM tournament_team WHERE tournament_id = ? AND disqualified = 1",
+    [tournamentId]
+  );
+  return new Set(rows.map((row) => row.team_id as number));
+}
+
+/** Disqualified teams go to the bottom of a table (they can't qualify or win). */
+const disqualifiedLast = (table: Standing[], disqualified: ReadonlySet<number>): Standing[] => [
+  ...table.filter((row) => !disqualified.has(row.team_id)),
+  ...table.filter((row) => disqualified.has(row.team_id))
+];
+
 async function insertNodes(tournamentId: number, nodes: BracketNode[]): Promise<void> {
   for (const node of nodes) {
     await db.query(
@@ -172,12 +188,13 @@ function groupTables(
   seeds: number[],
   settings: TournamentSettings,
   rows: RowDataPacket[],
-  matches: Map<number, RowDataPacket>
+  matches: Map<number, RowDataPacket>,
+  disqualified: ReadonlySet<number>
 ): { group: number; standings: Standing[] }[] {
   return groupSeeds(seeds.length, settings.group_count).map((members, index) => {
     const own = rows.filter((row) => groupOfKey(row.node_key) === index + 1);
     const teamIds = members.map((seed) => seeds[seed - 1]);
-    return { group: index + 1, standings: standings(teamIds, playedMatches(own, matches)) };
+    return { group: index + 1, standings: disqualifiedLast(standings(teamIds, playedMatches(own, matches)), disqualified) };
   });
 }
 
@@ -192,8 +209,11 @@ export async function refreshTournament(tournamentId: number): Promise<void> {
   if (!tournament || tournament.status === "draft") return;
   const settings = parseSettings(tournament.settings);
   const seeds = await seededTeamIds(tournamentId);
+  const disqualified = await disqualifiedTeams(tournamentId);
 
+  let complete = false;
   for (let pass = 0; pass < 2; pass++) {
+    complete = false;
     const rows = await nodeRows(tournamentId);
     const matchIds = rows.map((row) => row.match_id).filter((id) => id != null);
     const matchRows: RowDataPacket[] = matchIds.length
@@ -216,7 +236,7 @@ export async function refreshTournament(tournamentId: number): Promise<void> {
         results[row.node_key] = { winner_id: match.winner };
       }
     }
-    const resolved = resolveBracket(rows.map(toNode), seeds, results);
+    const resolved = resolveBracket(rows.map(toNode), seeds, results, disqualified);
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
       const node = resolved[i];
@@ -245,25 +265,39 @@ export async function refreshTournament(tournamentId: number): Promise<void> {
       const current = rows.filter((row) => row.round === lastRound);
       const totalRounds = settings.swiss_rounds ?? swissRounds(seeds.length);
       if (current.every((row) => finished(row.status))) {
-        if (lastRound < totalRounds) {
-          const byes = rows.filter((row) => row.status === "bye").map((row) => row.winner_id as number);
-          const ranking: Standing[] = standings(seeds, playedMatches(rows, matches), true, byes);
+        const byes = rows.filter((row) => row.status === "bye").map((row) => row.winner_id as number);
+        // Disqualified teams aren't paired any more.
+        const ranking: Standing[] = standings(seeds, playedMatches(rows, matches), true, byes).filter(
+          (row) => !disqualified.has(row.team_id)
+        );
+        if (lastRound < totalRounds && ranking.length >= 2) {
           await insertNodes(tournamentId, swissPairings(lastRound + 1, ranking, byes));
           continue; // resolve the new round (byes) in the second pass
         }
-        await db.query("UPDATE tournament SET status = 'finished' WHERE id = ?", [tournamentId]);
+        complete = true;
       }
     } else if (tournament.format === "groups_playoff" && !rows.some((row) => row.bracket !== "group")) {
       // The playoff is seeded from the final group tables, so it only exists once every group match is played.
       if (rows.every((row) => finished(row.status))) {
-        const tables = groupTables(seeds, settings, rows, matches).map((table) => table.standings);
-        await insertNodes(tournamentId, playoffBracket(playoffSeeds(tables, settings.group_advance)));
-        continue; // resolve the playoff (byes) in the second pass
+        const tables = groupTables(seeds, settings, rows, matches, disqualified).map((table) =>
+          table.standings.filter((row) => !disqualified.has(row.team_id))
+        );
+        const qualified = playoffSeeds(tables, settings.group_advance);
+        if (qualified.length >= 2) {
+          await insertNodes(tournamentId, playoffBracket(qualified));
+          continue; // resolve the playoff (byes) in the second pass
+        }
+        complete = true;
       }
-    } else if (rows.every((row) => finished(row.status))) {
-      await db.query("UPDATE tournament SET status = 'finished' WHERE id = ?", [tournamentId]);
+    } else {
+      complete = rows.every((row) => finished(row.status));
     }
     break;
+  }
+  // Undoing a result (unlinking a match, reinstating a team) can reopen a finished tournament.
+  const status = complete ? "finished" : "running";
+  if (tournament.status !== status) {
+    await db.query("UPDATE tournament SET status = ? WHERE id = ?", [status, tournamentId]);
   }
   GlobalEmitter.emit("tournamentUpdate");
 }
@@ -291,10 +325,12 @@ export async function loadTournament(tournamentId: number): Promise<Record<strin
   const tournament = tournamentRows[0];
   if (!tournament) return null;
   const teams: RowDataPacket[] = await db.query(
-    "SELECT tt.seed, t.id, t.name, t.tag, t.logo, t.flag FROM tournament_team tt JOIN team t ON t.id = tt.team_id " +
+    "SELECT tt.seed, tt.disqualified, t.id, t.name, t.tag, t.logo, t.flag FROM tournament_team tt JOIN team t ON t.id = tt.team_id " +
       "WHERE tt.tournament_id = ? ORDER BY tt.seed",
     [tournamentId]
   );
+  for (const team of teams) team.disqualified = truthy(team.disqualified);
+  const disqualified = new Set(teams.filter((team) => team.disqualified).map((team) => team.id as number));
   const rows = await nodeRows(tournamentId);
   const matchIds = rows.map((row) => row.match_id).filter((id) => id != null);
   const matchRows: RowDataPacket[] = matchIds.length
@@ -322,6 +358,8 @@ export async function loadTournament(tournamentId: number): Promise<Record<strin
       // "live" while a linked match is being played.
       status: row.status === "ready" && match && match.end_time == null ? "live" : row.status,
       match_id: row.match_id,
+      // An admin set this slot's teams by hand (PUT /tournaments/:id/nodes/:node_id can reset it).
+      manual: row.auto_sources != null,
       // Only the id: the address comes from GET /servers/:id, which checks who may see it.
       server_id: match ? match.server_id : null,
       best_of: truthy(row.is_final) ? parseSettings(tournament.settings).final_best_of : parseSettings(tournament.settings).best_of,
@@ -334,7 +372,10 @@ export async function loadTournament(tournamentId: number): Promise<Record<strin
   if (tournament.format === "round_robin" || tournament.format === "swiss") {
     const seeds = teams.map((team) => team.id as number);
     const byes = rows.filter((row) => row.status === "bye").map((row) => row.winner_id as number);
-    table = standings(seeds, playedMatches(rows, matches), tournament.format === "swiss", byes);
+    table = disqualifiedLast(
+      standings(seeds, playedMatches(rows, matches), tournament.format === "swiss", byes),
+      disqualified
+    );
   }
   const groups =
     tournament.format === "groups_playoff"
@@ -342,7 +383,8 @@ export async function loadTournament(tournamentId: number): Promise<Record<strin
           teams.map((team) => team.id as number),
           parseSettings(tournament.settings),
           rows,
-          matches
+          matches,
+          disqualified
         )
       : null;
   return {
@@ -362,4 +404,210 @@ export async function loadTournament(tournamentId: number): Promise<Record<strin
     standings: table,
     groups
   };
+}
+
+/** A refused tournament edit, with the HTTP status the route sends. */
+export class TournamentError extends Error {
+  constructor(
+    public status: number,
+    message: string
+  ) {
+    super(message);
+  }
+}
+
+/** The tournament's row for an admin edit (started, not a draft). */
+async function startedTournament(tournamentId: number): Promise<RowDataPacket> {
+  const rows: RowDataPacket[] = await db.query("SELECT * FROM tournament WHERE id = ?", [tournamentId]);
+  if (!rows.length) throw new TournamentError(404, "Tournament not found.");
+  if (rows[0].status === "draft") {
+    throw new TournamentError(412, "The tournament hasn't started: edit its teams instead.");
+  }
+  return rows[0];
+}
+
+const matchFinished = (match: RowDataPacket | undefined) =>
+  match != null && !truthy(match.cancelled) && (match.end_time != null || truthy(match.forfeit)) && match.winner != null;
+
+/**
+ * Why the outcome of a node can't change any more, or null: a later slot fed by it already has a match, a later
+ * Swiss round was paired from it, or the playoff was drawn from the group it belongs to.
+ */
+function lockedReason(tournament: RowDataPacket, rows: RowDataPacket[], row: RowDataPacket): string | null {
+  const dependents = dependentKeys(rows.map(toNode), row.node_key);
+  if (rows.some((other) => dependents.has(other.node_key) && other.match_id != null)) {
+    return "A later slot that depends on this one already has a match. Unlink that one first.";
+  }
+  if (tournament.format === "swiss" && rows.some((other) => other.round > row.round)) {
+    return "The next Swiss round was already paired from this result.";
+  }
+  if (row.bracket === "group" && rows.some((other) => other.bracket !== "group")) {
+    return "The playoff was already drawn from the group results.";
+  }
+  return null;
+}
+
+/**
+ * Disqualifies a team (it loses every slot it hasn't played; played results stand) or reinstates it.
+ * On disqualification, unfinished matches of its slots are unlinked so they can't decide the slot any more;
+ * their ids are returned so the admin can cancel them on the server.
+ */
+export async function setDisqualified(
+  tournamentId: number,
+  teamId: number,
+  disqualified: boolean
+): Promise<{ unlinked: number[] }> {
+  const tournament = await startedTournament(tournamentId);
+  const entry: RowDataPacket[] = await db.query(
+    "SELECT disqualified FROM tournament_team WHERE tournament_id = ? AND team_id = ?",
+    [tournamentId, teamId]
+  );
+  if (!entry.length) throw new TournamentError(404, "The team isn't in this tournament.");
+  if (truthy(entry[0].disqualified) === disqualified) return { unlinked: [] };
+
+  const rows = await nodeRows(tournamentId);
+  const own = rows.filter((row) => row.team1_id === teamId || row.team2_id === teamId);
+  const matchIds = own.map((row) => row.match_id).filter((id) => id != null);
+  const matchRows: RowDataPacket[] = matchIds.length
+    ? await db.query("SELECT id, winner, end_time, cancelled, forfeit FROM `match` WHERE id IN (?)", [matchIds])
+    : [];
+  const matches = new Map(matchRows.map((match) => [match.id as number, match]));
+  const unlinked: number[] = [];
+
+  if (disqualified) {
+    for (const row of own) {
+      if (row.match_id != null && !matchFinished(matches.get(row.match_id))) {
+        await db.query("UPDATE tournament_match SET match_id = NULL WHERE id = ?", [row.id]);
+        unlinked.push(row.match_id);
+      }
+    }
+  } else {
+    // The slots the disqualification decided (no played match) go back to ready: nothing may depend on them yet.
+    for (const row of own) {
+      const decidedByDq =
+        !matchFinished(row.match_id ? matches.get(row.match_id) : undefined) &&
+        ((row.status === "done" && row.winner_id !== teamId) || row.status === "empty");
+      const reason = decidedByDq ? lockedReason(tournament, rows, row) : null;
+      if (reason) throw new TournamentError(409, `The team can't be reinstated. ${reason}`);
+    }
+  }
+  await db.query("UPDATE tournament_team SET disqualified = ? WHERE tournament_id = ? AND team_id = ?", [
+    disqualified ? 1 : 0,
+    tournamentId,
+    teamId
+  ]);
+  await refreshTournament(tournamentId);
+  return { unlinked };
+}
+
+async function tournamentNode(tournamentId: number, nodeId: number): Promise<RowDataPacket> {
+  const rows: RowDataPacket[] = await db.query("SELECT * FROM tournament_match WHERE id = ? AND tournament_id = ?", [
+    nodeId,
+    tournamentId
+  ]);
+  if (!rows.length) throw new TournamentError(404, "Tournament match not found.");
+  return rows[0];
+}
+
+/**
+ * Sets the two teams of a slot that has no match yet (null = nobody, a bye), or with teams = null puts back the
+ * teams the bracket generated for it. A slot set by hand keeps its teams whatever happens before it.
+ */
+export async function setNodeTeams(
+  tournamentId: number,
+  nodeId: number,
+  teams: [number | null, number | null] | null
+): Promise<void> {
+  const tournament = await startedTournament(tournamentId);
+  const node = await tournamentNode(tournamentId, nodeId);
+  if (node.match_id != null) throw new TournamentError(409, "This slot has a match: unlink it first.");
+  const rows = await nodeRows(tournamentId);
+  const reason = lockedReason(tournament, rows, node);
+  if (reason) throw new TournamentError(409, reason);
+
+  if (teams === null) {
+    if (node.auto_sources == null) return;
+    await db.query("UPDATE tournament_match SET sources = ?, auto_sources = NULL WHERE id = ?", [
+      node.auto_sources,
+      node.id
+    ]);
+  } else {
+    const chosen = teams.filter((id): id is number => id != null);
+    if (chosen.length === 2 && chosen[0] === chosen[1]) {
+      throw new TournamentError(412, "A team can't play itself.");
+    }
+    const entries: RowDataPacket[] = await db.query(
+      "SELECT team_id, disqualified FROM tournament_team WHERE tournament_id = ?",
+      [tournamentId]
+    );
+    for (const id of chosen) {
+      const entry = entries.find((row) => row.team_id === id);
+      if (!entry) throw new TournamentError(412, "A team isn't in this tournament.");
+      if (truthy(entry.disqualified)) throw new TournamentError(412, "A disqualified team can't be placed in a slot.");
+    }
+    const group = groupOfKey(node.node_key);
+    if (group != null) {
+      // Group standings only count the group's own teams.
+      const seeds = await seededTeamIds(tournamentId);
+      const members = groupSeeds(seeds.length, parseSettings(tournament.settings).group_count)[group - 1] ?? [];
+      const memberIds = members.map((seed) => seeds[seed - 1]);
+      if (chosen.some((id) => !memberIds.includes(id))) {
+        throw new TournamentError(412, "Both teams must be from this group.");
+      }
+    }
+    const busy = rows.find(
+      (row) =>
+        row.id !== node.id &&
+        row.bracket === node.bracket &&
+        row.round === node.round &&
+        groupOfKey(row.node_key) === group &&
+        chosen.some((id) => row.team1_id === id || row.team2_id === id)
+    );
+    if (busy) throw new TournamentError(412, "A team already plays another match of this round.");
+    const sources: [Source, Source] = [
+      teams[0] == null ? null : { type: "team", team_id: teams[0] },
+      teams[1] == null ? null : { type: "team", team_id: teams[1] }
+    ];
+    await db.query("UPDATE tournament_match SET sources = ?, auto_sources = ? WHERE id = ?", [
+      JSON.stringify(sources),
+      node.auto_sources ?? node.sources,
+      node.id
+    ]);
+  }
+  await refreshTournament(tournamentId);
+}
+
+/**
+ * Links an existing match (e.g. one created by hand on the create match page) to a ready slot with the same
+ * teams, or with matchId = null unlinks the slot's match (the match itself stays). A finished match decides the
+ * slot at once.
+ */
+export async function setNodeMatch(tournamentId: number, nodeId: number, matchId: number | null): Promise<void> {
+  const tournament = await startedTournament(tournamentId);
+  const node = await tournamentNode(tournamentId, nodeId);
+  if (matchId === null) {
+    if (node.match_id == null) return;
+    const reason = lockedReason(tournament, await nodeRows(tournamentId), node);
+    if (reason) throw new TournamentError(409, reason);
+    await db.query("UPDATE tournament_match SET match_id = NULL WHERE id = ?", [node.id]);
+  } else {
+    if (node.match_id != null) throw new TournamentError(409, "This slot already has a match: unlink it first.");
+    if (node.status !== "ready") {
+      throw new TournamentError(409, "Only a slot with both teams and no result can get a match.");
+    }
+    const found: RowDataPacket[] = await db.query("SELECT id, team1_id, team2_id, cancelled FROM `match` WHERE id = ?", [
+      matchId
+    ]);
+    const match = found[0];
+    if (!match) throw new TournamentError(404, "Match not found.");
+    if (truthy(match.cancelled)) throw new TournamentError(412, "The match was cancelled.");
+    const sameTeams =
+      (match.team1_id === node.team1_id && match.team2_id === node.team2_id) ||
+      (match.team1_id === node.team2_id && match.team2_id === node.team1_id);
+    if (!sameTeams) throw new TournamentError(412, "The match's teams don't match the slot's teams.");
+    const linked: RowDataPacket[] = await db.query("SELECT id FROM tournament_match WHERE match_id = ?", [matchId]);
+    if (linked.length) throw new TournamentError(409, "That match already belongs to a tournament slot.");
+    await db.query("UPDATE tournament_match SET match_id = ? WHERE id = ?", [matchId, node.id]);
+  }
+  await refreshTournament(tournamentId);
 }

@@ -293,6 +293,9 @@ Facts below were checked against MatchZy's source (MatchManagement.cs, ReadySyst
 - [x] **5.12 Groups + playoff tournaments** (user request, 2026-10-27): format `groups_playoff`, snake-seeded round
   robin groups (`group_count`), then the top `group_advance` of each group play a single elimination playoff, drawn
   automatically once every group match is played (A1 v B2, B1 v A2). Bracket byes are no longer drawn as matches
+- [x] **5.13 Tournament admin edits** (user request, 2026-11-22): disqualify/reinstate a team (unplayed slots go to
+  the opponent, unfinished matches are unlinked), set a slot's teams by hand (and reset), link a hand-made match to a
+  ready slot or unlink one. Undoing results that later slots depend on is refused.
 
 ## Phase 6: Ops
 - [x] Node 22 LTS (`engines` >=22.12, `.nvmrc`, Dockerfile `node:22-alpine`); pm2 `prodrun.json` with

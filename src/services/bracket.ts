@@ -206,8 +206,16 @@ export function roundRobin(teamCount: number): BracketNode[] {
 
 /** Fills in teams, winners and statuses from the seeding and the played results. Nodes must be in dependency
  * order (as the generators return them). A slot whose source can never produce a team is a bye, and a node
- * with one team against a bye is won by that team without a match. */
-export function resolveBracket(nodes: BracketNode[], seeds: number[], results: Results): ResolvedNode[] {
+ * with one team against a bye is won by that team without a match.
+ * @param disqualified - teams that lose every node they haven't played yet (played results stand); a node
+ *   between two disqualified teams has no winner and counts as empty for the nodes it feeds.
+ */
+export function resolveBracket(
+  nodes: BracketNode[],
+  seeds: number[],
+  results: Results,
+  disqualified: ReadonlySet<number> = new Set()
+): ResolvedNode[] {
   const byKey = new Map<string, ResolvedNode>();
   // A slot is: a team id, null for "nobody, ever" (bye), or undefined for "not known yet".
   const slot = (source: Source): number | null | undefined => {
@@ -241,6 +249,12 @@ export function resolveBracket(nodes: BracketNode[], seeds: number[], results: R
       const winner = result?.winner_id;
       if (winner != null && (winner === a || winner === b)) {
         Object.assign(out, { status: "done", winner_id: winner, loser_id: winner === a ? b : a });
+      } else if (disqualified.has(a) && disqualified.has(b)) {
+        out.status = "empty";
+      } else if (disqualified.has(a)) {
+        Object.assign(out, { status: "done", winner_id: b, loser_id: a });
+      } else if (disqualified.has(b)) {
+        Object.assign(out, { status: "done", winner_id: a, loser_id: b });
       } else {
         out.status = "ready";
       }
@@ -249,6 +263,26 @@ export function resolveBracket(nodes: BracketNode[], seeds: number[], results: R
     resolved.push(out);
   }
   return resolved;
+}
+
+/** The keys of every node that takes a team, directly or further down, from the given node's winner or loser. */
+export function dependentKeys(nodes: BracketNode[], nodeKey: string): Set<string> {
+  const found = new Set<string>();
+  const queue = [nodeKey];
+  while (queue.length) {
+    const current = queue.shift()!;
+    for (const node of nodes) {
+      if (found.has(node.key)) continue;
+      const fed = node.sources.some(
+        (source) => (source?.type === "winner" || source?.type === "loser") && source.key === current
+      );
+      if (fed) {
+        found.add(node.key);
+        queue.push(node.key);
+      }
+    }
+  }
+  return found;
 }
 
 export interface Standing {

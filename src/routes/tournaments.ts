@@ -11,7 +11,11 @@ import {
   FORMATS,
   loadTournament,
   refreshTournament,
-  startTournament
+  setDisqualified,
+  setNodeMatch,
+  setNodeTeams,
+  startTournament,
+  TournamentError
 } from "../services/tournaments.js";
 import type { TournamentFormat } from "../services/bracket.js";
 import GlobalEmitter from "../utility/emitter.js";
@@ -413,5 +417,182 @@ router.post("/:tournament_id/refresh", Utils.ensureAuthenticated, async (req, re
     next(err);
   }
 });
+
+/** Runs a tournament edit, sending its TournamentError as the response. Returns false when refused. */
+async function tournamentEdit(res: any, action: () => Promise<unknown>): Promise<unknown> {
+  try {
+    return (await action()) ?? true;
+  } catch (err) {
+    if (err instanceof TournamentError) {
+      res.status(err.status).json({ message: err.message });
+      return false;
+    }
+    throw err;
+  }
+}
+
+/** A body id: a positive integer, null (or absent) for "none", undefined when it is neither. */
+const optionalId = (value: unknown): number | null | undefined => {
+  if (value === null || value === undefined || value === "") return null;
+  const id = Number(value);
+  return Number.isInteger(id) && id > 0 ? id : undefined;
+};
+
+/**
+ * @swagger
+ *
+ * /tournaments/:tournament_id/teams/:team_id:
+ *   put:
+ *     description: >
+ *       Disqualifies a team from a started tournament, or reinstates it. Body - disqualified (boolean). A
+ *       disqualified team loses every slot it hasn't played (played results stand), isn't paired in later Swiss
+ *       rounds and can't qualify from a group. Its unfinished matches are unlinked from the bracket and returned
+ *       as unlinked_match_ids, so they can be cancelled. Reinstating is refused once later slots depend on a slot
+ *       the disqualification decided. Owner or admin.
+ *     tags:
+ *       - tournaments
+ *     responses:
+ *       200:
+ *         description: "{ message, unlinked_match_ids }"
+ *       404:
+ *         $ref: '#/components/responses/NotFound'
+ *       409:
+ *         description: Later matches already depend on it (reinstating).
+ *       412:
+ *         description: The tournament is still a draft.
+ */
+router.put(
+  "/:tournament_id/teams/:team_id",
+  Utils.ensureAuthenticated,
+  audited("tournament.disqualify", {
+    target: (req) => ({ type: "tournament", id: Number(req.params.tournament_id) || null }),
+    detail: (req) =>
+      `team ${Number(req.params.team_id) || 0} ${firstBody(req).disqualified ? "disqualified" : "reinstated"}`
+  }),
+  async (req, res, next) => {
+    try {
+      const tournament = await editableTournament(req, res);
+      if (!tournament) return;
+      const body = firstBody(req);
+      if (typeof body.disqualified !== "boolean") {
+        res.status(412).json({ message: "disqualified must be true or false." });
+        return;
+      }
+      const result = await tournamentEdit(res, () =>
+        setDisqualified(tournament.id, Number(req.params.team_id) || 0, body.disqualified as boolean)
+      );
+      if (!result) return;
+      res.json({
+        message: body.disqualified ? "Team disqualified." : "Team reinstated.",
+        unlinked_match_ids: (result as { unlinked: number[] }).unlinked
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * @swagger
+ *
+ * /tournaments/:tournament_id/nodes/:node_id:
+ *   put:
+ *     description: >
+ *       Sets the teams of a bracket slot without a match. Body - team1_id and team2_id (tournament teams, null for
+ *       nobody/a bye), or reset true to put back the teams the bracket generated. A slot set by hand keeps its
+ *       teams whatever happens before it; group slots only take the group's teams. Owner or admin.
+ *     tags:
+ *       - tournaments
+ *     responses:
+ *       200:
+ *         description: Updated.
+ *       404:
+ *         $ref: '#/components/responses/NotFound'
+ *       409:
+ *         description: The slot has a match, or later matches depend on it.
+ *       412:
+ *         description: Invalid teams.
+ */
+router.put(
+  "/:tournament_id/nodes/:node_id",
+  Utils.ensureAuthenticated,
+  audited("tournament.node_teams", {
+    target: (req) => ({ type: "tournament", id: Number(req.params.tournament_id) || null }),
+    detail: (req) => {
+      const body = firstBody(req);
+      return body.reset
+        ? `slot ${Number(req.params.node_id) || 0} reset`
+        : `slot ${Number(req.params.node_id) || 0}: ${String(body.team1_id ?? "-")} v ${String(body.team2_id ?? "-")}`;
+    }
+  }),
+  async (req, res, next) => {
+    try {
+      const tournament = await editableTournament(req, res);
+      if (!tournament) return;
+      const body = firstBody(req);
+      let teams: [number | null, number | null] | null = null;
+      if (!body.reset) {
+        const team1 = optionalId(body.team1_id);
+        const team2 = optionalId(body.team2_id);
+        if (team1 === undefined || team2 === undefined) {
+          res.status(412).json({ message: "Invalid team." });
+          return;
+        }
+        teams = [team1, team2];
+      }
+      const done = await tournamentEdit(res, () => setNodeTeams(tournament.id, Number(req.params.node_id) || 0, teams));
+      if (done) res.json({ message: "Tournament match updated." });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * @swagger
+ *
+ * /tournaments/:tournament_id/nodes/:node_id/match:
+ *   put:
+ *     description: >
+ *       Links an existing match (for example one created by hand) to a ready slot with the same teams, or unlinks
+ *       the slot's match with match_id null (the match itself stays). Body - match_id. A finished match decides
+ *       the slot at once. Unlinking is refused once later matches depend on the result. Owner or admin.
+ *     tags:
+ *       - tournaments
+ *     responses:
+ *       200:
+ *         description: Updated.
+ *       404:
+ *         $ref: '#/components/responses/NotFound'
+ *       409:
+ *         description: The slot isn't ready or already has a match, the match is linked elsewhere, or later
+ *           matches depend on it.
+ *       412:
+ *         description: The match was cancelled or has other teams.
+ */
+router.put(
+  "/:tournament_id/nodes/:node_id/match",
+  Utils.ensureAuthenticated,
+  audited("tournament.node_match", {
+    target: (req) => ({ type: "tournament", id: Number(req.params.tournament_id) || null }),
+    detail: (req) =>
+      `slot ${Number(req.params.node_id) || 0}: match ${String(optionalId(firstBody(req).match_id) ?? "unlinked")}`
+  }),
+  async (req, res, next) => {
+    try {
+      const tournament = await editableTournament(req, res);
+      if (!tournament) return;
+      const matchId = optionalId(firstBody(req).match_id);
+      if (matchId === undefined) {
+        res.status(412).json({ message: "Invalid match id." });
+        return;
+      }
+      const done = await tournamentEdit(res, () => setNodeMatch(tournament.id, Number(req.params.node_id) || 0, matchId));
+      if (done) res.json({ message: matchId ? "Match linked." : "Match unlinked." });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
 
 export default router;
