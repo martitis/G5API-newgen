@@ -100,6 +100,18 @@ class Utils {
     return joinUrl(config.get<string>("server.apiURL"), path);
   }
 
+  /** MatchZy is told to upload demos: server.uploadDemos is on and the demos aren't read in place
+   * (server.localDemoDir, game servers on this machine), which would only make a second copy.
+   * @name demoUploadsEnabled
+   * @function
+   * @inner
+   * @memberof module:utils
+   */
+  static demoUploadsEnabled(): boolean {
+    const localDir = config.has("server.localDemoDir") ? String(config.get("server.localDemoDir") ?? "").trim() : "";
+    return Boolean(config.get("server.uploadDemos")) && !localDir;
+  }
+
   /** Builds an absolute URL on the API as the game servers reach it: server.gameServerURL when set (e.g.
    * "http://127.0.0.1:3301" when they run on the same machine, skipping the proxy and CDN), else server.apiURL.
    * Only for what MatchZy calls: match config, events, backups, demos. Browser-facing URLs use apiUrl().

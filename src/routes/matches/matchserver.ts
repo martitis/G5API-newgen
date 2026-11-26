@@ -13,7 +13,6 @@ import Utils from "../../utility/utils.js";
 
 import GameServer, { BackupEntry, parseStatusPlayers, RconArgumentError, restoreFailed } from "../../utility/serverrcon.js";
 import { callbackCvars } from "../../services/matchconfig.js";
-import config from "config";
 import { audited, firstBody } from "../../utility/audit.js";
 import { onMatchChanged } from "../../services/tournaments.js";
 import { controlCommand } from "../../utility/matchcontrol.js";
@@ -1425,7 +1424,7 @@ router.post("/:match_id/callbacks", Utils.ensureAuthenticated, audited("match.up
     ]);
     const serverUpdate: GameServer = await getGameServer(req.params.match_id);
     const response: string = await serverUpdate.setCvars(
-      callbackCvars(matchRow[0].api_key, Boolean(config.get("server.uploadDemos")))
+      callbackCvars(matchRow[0].api_key, Utils.demoUploadsEnabled())
     );
     res.json({ message: "Panel address sent to the game server.", response });
   } catch (err) {

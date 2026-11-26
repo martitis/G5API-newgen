@@ -87,6 +87,10 @@ All scripts are cross-platform (cross-env plus `scripts/test-admin.mjs`, no sed/
   next `map_number` with the finished map's score (LAN 2026-11: rolling back scores this way flagged every map
   incomplete). Offline servers are logged once per change, not per probe.
 - `/v2` events for a finished or cancelled match get 200 "ignored"; only a wrong key gets 401.
+- Local demos: `src/services/localdemos.ts`. With `server.localDemoDir` (a read-only bind mount of MatchZy's demo
+  folder, DEPLOY.md) a 2-minute sweep links finished maps to `<match id>_<map name>` demo files and marks vanished
+  ones `demo_status = 'archived'`; `GET /demo/:file` serves them after `public/demos`. Never write or delete there.
+  `Utils.demoUploadsEnabled()` is false then, so MatchZy isn't told to upload a second copy.
 - `src/services/challonge.ts`: Challonge score sync. `src/types/`: TS types.
 
 ## MatchZy integration facts (verified against the MatchZy source)

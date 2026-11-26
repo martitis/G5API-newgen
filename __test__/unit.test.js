@@ -10,6 +10,7 @@ import { buildSummary } from "../src/services/matchsummary.js";
 import { normalizeSide } from "../src/services/mapflowservices.js";
 import { cleanSettings } from "../src/services/tournaments.js";
 import { eventProblem } from "../src/services/eventschemas.js";
+import { demoFileFor, isDemoName, SETTLE_MS } from "../src/services/localdemos.js";
 import { forMatch } from "../src/utility/emitter.js";
 import { assessServerState, nextState } from "../src/services/serverstate.js";
 import { passwordProblem, usernameProblem } from "../src/utility/credentials.js";
@@ -761,6 +762,79 @@ describe("groups + playoff", () => {
       [1, 5],
       [4, 2]
     ]);
+  });
+});
+
+describe("local demos", () => {
+  const old = Date.now() - 10 * 60 * 1000;
+  const files = [
+    { name: "2026-11-21_23-46-20_220_de_anubis_NaJkintuvai_vs_Kaunas.dem", size: 13404522, mtimeMs: old },
+    { name: "2026-11-21_20-08-12_1220_de_anubis_Kaunas_vs_ReBots.dem", size: 258791097, mtimeMs: old },
+    { name: "2026-11-22_01-14-42_224_de_mirage_dzempub_vs_NaJkintuvai.dem", size: 229317843, mtimeMs: old },
+    { name: "2026-11-22_02-03-43_224_de_ancient_dzempub_vs_NaJkintuvai.dem", size: 147373989, mtimeMs: old },
+    { name: "2026-11-20_20-03-53_165_de_nuke_ℜ_vs_LAKY.dem", size: 300000000, mtimeMs: old }
+  ];
+  it("finds a map's demo by match id and map name, whole parts only", () => {
+    expect(demoFileFor(files, 220, "de_anubis")).toBe("2026-11-21_23-46-20_220_de_anubis_NaJkintuvai_vs_Kaunas.dem");
+    expect(demoFileFor(files, 224, "de_ancient")).toMatch(/_224_de_ancient_/);
+    expect(demoFileFor(files, 22, "de_anubis")).toBeNull(); // 220 and 1220 are other matches
+    expect(demoFileFor(files, 165, "de_nuke")).toMatch(/ℜ_vs_LAKY\.dem$/);
+    expect(demoFileFor(files, 224, "")).toBeNull();
+  });
+  it("waits until the demo is written, and takes the full one after a map restart", () => {
+    const now = Date.now();
+    const writing = [{ name: "x_7_de_nuke_a_vs_b.dem", size: 5, mtimeMs: now - 1000 }];
+    expect(demoFileFor(writing, 7, "de_nuke", now)).toBeNull();
+    expect(demoFileFor(writing, 7, "de_nuke", now + SETTLE_MS)).toBe("x_7_de_nuke_a_vs_b.dem");
+    const restarted = [
+      { name: "t1_7_de_nuke_a_vs_b.dem", size: 1000, mtimeMs: old },
+      { name: "t2_7_de_nuke_a_vs_b.dem", size: 900000, mtimeMs: old }
+    ];
+    expect(demoFileFor(restarted, 7, "de_nuke")).toBe("t2_7_de_nuke_a_vs_b.dem");
+  });
+  it("only takes plain .dem names", () => {
+    expect(isDemoName("2026-11-20_20-03-53_165_de_nuke_ℜ_vs_LAKY.dem")).toBe(true);
+    for (const bad of ["../secrets.dem", "a/b.dem", "a\\b.dem", ".hidden.dem", "demo.zip", "x.dem\0"]) {
+      expect(isDemoName(bad)).toBe(false);
+    }
+  });
+  it("serves a demo from the folder read-only, and nothing outside it", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "demos-"));
+    writeFileSync(join(dir, "t_9_de_nuke_ℜ_vs_b.dem"), "DEMO");
+    writeFileSync(join(tmpdir(), "outside-secret.dem"), "SECRET");
+    const realGet = config.get.bind(config);
+    const realHas = config.has.bind(config);
+    jest.spyOn(config, "get").mockImplementation((key) => (key === "server.localDemoDir" ? dir : realGet(key)));
+    jest.spyOn(config, "has").mockImplementation((key) => key === "server.localDemoDir" || realHas(key));
+    try {
+      const ok = await request.get("/demo/" + encodeURIComponent("t_9_de_nuke_ℜ_vs_b.dem")).expect(200);
+      expect(ok.headers["content-disposition"]).toMatch(/attachment/);
+      for (const bad of ["..%2Foutside-secret.dem", "%2E%2E%2Foutside-secret.dem", "missing.dem", "x.txt"]) {
+        await request.get("/demo/" + bad).expect(404);
+      }
+    } finally {
+      jest.restoreAllMocks();
+    }
+  });
+  it("doesn't ask MatchZy to upload when demos are read in place", () => {
+    expect(Utils.demoUploadsEnabled()).toBe(false); // test config: uploadDemos false
+    const realGet = config.get.bind(config);
+    const realHas = config.has.bind(config);
+    const mock = (local) => {
+      jest.spyOn(config, "get").mockImplementation((key) =>
+        key === "server.uploadDemos" ? true : key === "server.localDemoDir" ? local : realGet(key)
+      );
+      jest.spyOn(config, "has").mockImplementation((key) => key === "server.localDemoDir" || realHas(key));
+    };
+    try {
+      mock("");
+      expect(Utils.demoUploadsEnabled()).toBe(true);
+      jest.restoreAllMocks();
+      mock("/srv/cs2demos");
+      expect(Utils.demoUploadsEnabled()).toBe(false);
+    } finally {
+      jest.restoreAllMocks();
+    }
   });
 });
 

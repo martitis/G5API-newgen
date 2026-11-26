@@ -18,7 +18,6 @@ import GameServer from "../../utility/serverrcon.js";
 
 import GlobalEmitter, { forMatch } from "../../utility/emitter.js";
 
-import config from "config";
 import {
   buildMatchConfig,
   MatchConfigError,
@@ -1419,7 +1418,7 @@ router.get("/:match_id/config", async (req, res, next) => {
           auth: string;
           spectator_name: string | null;
         }>,
-        uploadDemos: Boolean(config.get("server.uploadDemos")),
+        uploadDemos: Utils.demoUploadsEnabled(),
         serverPassword: (matchServer[0]?.join_password as string | null | undefined) || null
       },
       match.api_key

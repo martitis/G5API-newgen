@@ -11,6 +11,7 @@
     "gameServerURL": "$GAMESERVERURL",
     "listenHost": "$LISTENHOST",
     "uploadDemos": $UPLOADDEMOS,
+    "localDemoDir": "$LOCALDEMODIR",
     "localLoginEnabled": $LOCALLOGINS,
     "redisUrl": "$REDISURL",
     "redisTTL": $REDISTTL
